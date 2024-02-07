@@ -50,25 +50,31 @@ class Baseline:
             self.fuseMaxH = max(self.fuseMaxH, vsp.GetXSecHeight(xsec))
             self.fuseMaxD = max(self.fuseMaxD, vsp.GetXSecWidth(xsec))
 
+        # Operating limits
+        self.cruise_mach = row["Cruise Mach"]
+
         ## SUAVE vehicle
         self.suaveVehicle = vsp_read(tag=self.vspPath,
                                      units_type="SI",
                                      specified_network=None,
                                      use_scaling=True)
+        
+        self.suaveVehicle.tag = self.dispName
+
+        # Dry weight and weight limits
+        self.suaveVehicle.mass_properties.operating_empty = row["OEW, kg"][0] * Units.kilogram
+        self.suaveVehicle.mass_properties.max_takeoff = row["MTOW, kg"][0] * Units.kilogram
+        self.suaveVehicle.mass_properties.max_zero_fuel = row["MZFW, kg"][0] * Units.kilogram
 
         self.suaveVehicle["wings"]["main_wing"] = self.suaveVehicle["wings"]["wing"]
         del self.suaveVehicle["wings"]["wing"]
         self.suaveVehicle["wings"]["main_wing"].tag = "main_wing"
-
-        self.suaveVehicle.mass_properties.max_takeoff = row["MTOW, kg"][0] * Units.kilogram
-        self.suaveVehicle.mass_properties.max_zero_fuel = row["MZFW, kg"][0] * Units.kilogram
 
         #self.suaveVehicle.envelope.ultimate_load = 3.75 # UPDATE THESE - TAKEN FROM 737
         #self.suaveVehicle.envelope.limit_load = 2.5
 
         self.suaveVehicle.reference_area = self.suaveVehicle["wings"]["main_wing"].areas.reference * Units["meters**2"]
 
-        #print(self.suaveVehicle.keys())
         self.suaveVehicle["networks"].clear()
 
         # Dry CG position?
