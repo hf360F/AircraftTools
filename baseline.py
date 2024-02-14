@@ -33,7 +33,7 @@ class Baseline:
         dfAircraft = pd.read_excel(DATABASE_PATH, sheet_name="Aircraft")
         dfEngines = pd.read_excel(DATABASE_PATH, sheet_name="Engines")
         aircraftEntry = dfAircraft.loc[dfAircraft["Aircraft display name"] == dispName]
-        engineEntry = dfEngines.loc[dfEngines["Engine model"] == aircraftEntry["Engine model"].values]
+        engineEntry = dfEngines.loc[dfEngines["Engine model"] == aircraftEntry["Engine model"].values[0]]
 
         # Extract aircraft parameters
         vsp3File = aircraftEntry["VSP3 file name"].values[0]
@@ -205,15 +205,20 @@ class Baseline:
         combustor.pressure_ratio = engineEntry["Combustor PR"].values[0]
 
         # Check fuel assignment
-        if engineEntry["Combustor fuel"].values[0] not in self.fuels.keys():
+        if aircraftEntry['Fuel'].values[0] not in self.fuels.keys():
             raise ValueError(f"Class supports fuels '{self.fuels.keys()}' ({engineEntry['Combustor fuel'].values[0]} provided)")
         else:
             combustor.fuel_data = self.fuels[aircraftEntry['Fuel'].values[0]]
-            if combustor.fuel_data != self.fuels[aircraftEntry["Fuel"].values[0]]:
-                print(f"\AIRCRAFT-ENGINE FUEL MISMATCH: ENGINE {engineEntry['Engine model'].values[0]} "\
-                      f"'{combustor.fuel_data.tag}', AIRCRAFT {self.dispName} '{self.fuels[aircraftEntry['Fuel'].values[0]].tag}'. "\
+            if combustor.fuel_data != self.fuels[engineEntry["Combustor fuel"].values[0]]:
+                print(f"\nAIRCRAFT-ENGINE FUEL MISMATCH: ENGINE {engineEntry['Engine model'].values[0]} "\
+                      f"'{self.fuels[engineEntry['Combustor fuel'].values[0]].tag}', AIRCRAFT {self.dispName} '{self.fuels[aircraftEntry['Fuel'].values[0]].tag}'. "\
                       f"DEFAULTING TO AIRCRAFT FUEL.\n")
         
+        # Overide hydrogen specific energy to LHV from SUAVE default of HHV
+        if combustor.fuel_data == self.fuels["LH2"]:
+            combustor.fuel_data.specific_energy = 119.9E6
+            print("\nHYDROGEN SPECIFIC ENERGY SET TO LHV 119.9 MJ/KG FROM HHV 141.9 MJ/KG.\n")
+
         turbofan.append(combustor)
 
         # High pressure turbine

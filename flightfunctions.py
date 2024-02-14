@@ -23,7 +23,16 @@ def aeroSweep(vehicle, alphas, machs, altitude, deltaT=0):
     """
 
     # Results list
-    results = []
+    grid = np.zeros((len(machs), len(alphas)))
+    results = {"totalLift": np.zeros_like(grid),
+               "totalDrag": np.zeros_like(grid),
+               "liftToDrag": np.zeros_like(grid),
+               "parasiticDragTotal": np.zeros_like(grid),
+               "parasiticDragFull": np.ndarray((len(machs), len(alphas)), dtype=Data),
+               "inducedDrag": np.zeros_like(grid),
+               "compDrag": np.zeros_like(grid),
+               "miscDrag": np.zeros_like(grid)}
+    results2 = [] 
 
     # Approximate wing areas
     for wing in vehicle.wings:
@@ -34,13 +43,6 @@ def aeroSweep(vehicle, alphas, machs, altitude, deltaT=0):
     aero = SUAVE.Analyses.Aerodynamics.Fidelity_Zero()
     aero.geometry = vehicle
     aero.initialize()
-
-    # Vehicle needs energy networks! Botch it for now...
-    turbofan = SUAVE.Components.Energy.Networks.Turbofan()
-    vehicle.append_component(turbofan)
-
-    # Figure
-    fig, ax = plt.subplots(dpi=200)
 
     # Initialise state object
     state = SUAVE.Analyses.Mission.Segments.Conditions.State()
@@ -61,10 +63,10 @@ def aeroSweep(vehicle, alphas, machs, altitude, deltaT=0):
     p = p[:,None]
     alphas = alphas[:,None]
     
+    i = 0
     for mach in machs:
         M = np.array([mach])
         M = M[:,None]
-
         state.conditions.freestream.mach_number = M
         state.conditions.freestream.density = rho
         state.conditions.freestream.dynamic_viscosity = mu
@@ -74,29 +76,23 @@ def aeroSweep(vehicle, alphas, machs, altitude, deltaT=0):
         state.conditions.aerodynamics.angle_of_attack = alphas
 
         result = aero.evaluate(state)
-        print(type(result), type(fig), type(ax))
-        results.append(result)
+        results2.append(result)
 
-        lift = result.lift.total
-        drag = result.drag.total[0]
-        LD = np.divide(lift, drag)
+        results["totalLift"][i] = [value[0] for value in result.lift.total]
+        results["totalDrag"][i] = [value[0] for value in result.drag.total[0]]
+        results["liftToDrag"][i] = np.divide(results["totalLift"][i], results["totalDrag"][i])
+        results["parasiticDragTotal"][i] = [value[0] for value in result.drag.parasite.total[0]]
+        results["parasiticDragFull"][i] = result.drag.parasite
+        results["inducedDrag"][i] = [value[0] for value in result.drag.induced[0]]
+        results["compDrag"][i] = [value[0] for value in result.drag.compressibility.total]
+        results["miscDrag"][i] = [value[0] for value in result.drag.miscellaneous]
+        
+        i += 1
 
-        ax.plot(drag, lift, label=f"Mach = {mach:.3f}")
-    
-        ldmaxindex = np.argwhere(LD==np.max(LD))[0][0]
-        ldmax = np.max(LD[ldmaxindex])
-        ax.scatter(drag[ldmaxindex], lift[ldmaxindex], zorder=100,
-                   marker="o", label=f"Mach {mach:.3f} max L/D = {ldmax:.2f}")
+    results["machs"] = machs
+    results["alphas"] = alphas
 
-    ax.set_title(f"Polar for {vehicle.tag} at {altitude} m")
-    ax.set_xlabel("Vehicle drag coefficient")
-    ax.set_ylabel("Vehicle lift coefficient")
-    ax.set_xlim(0)
-    ax.set_ylim(0)
-    ax.grid()
-    ax.legend()
-
-    return fig, ax, results
+    return results
 
 def flightMission(Aircraft, range, fuel, payload, climbType, cruiseAlt):
 
