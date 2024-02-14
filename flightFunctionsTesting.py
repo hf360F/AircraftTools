@@ -1,9 +1,10 @@
 import numpy as np
 from copy import deepcopy
 import matplotlib.pyplot as plt
+from matplotlib.patches import ConnectionPatch
 
 import baseline as base
-from flightfunctions import *
+from flightFunctions import *
 import SUAVE
 import openvsp as vsp
 from SUAVE.Core import Data, Units
@@ -12,6 +13,9 @@ from SUAVE.Input_Output.OpenVSP.vsp_read import vsp_read
 
 A320 = base.Baseline("Airbus A320-200ceo")
 A320Dorsal = base.Baseline("Airbus A320-200ceoMOD")
+
+#print(fuel)
+#raise ValueError("Done")
 
 # Derivative for A320: targeting 9000 kg LH2 capacity
 # ~130 m^2 tank volume
@@ -49,20 +53,128 @@ def plot_mission(results,line_style='bo-'):
         
     return
 
+# Drag polar
+if True:
+    Aircrafts = (A320, A320Dorsal)
+    colours = ("red", "blue")
+    i = 0
 
-# Polar
-if False:
-    fig, ax, results = aeroSweep(vehicle = A320.suaveVehicle,
-                                alphas = np.linspace(-1*np.pi/180, 6*np.pi/180, 50),
-                                machs = np.array([A320.cruise_mach[0]]),
-                                altitude = 10000)
-    plt.show()
+    for Aircraft in Aircrafts:
+        results = aeroSweep(vehicle = Aircraft.suaveVehicle,
+                                    alphas = np.linspace(-1*np.pi/180, 6*np.pi/180, 100),
+                                    machs = np.array([0.1, 0.6, Aircraft.cruise_mach]),
+                                    altitude = 10668)
+        
+        targetMach = Aircraft.cruise_mach
+        nearestMachIndex = np.argmin(np.abs(np.subtract(results["machs"], targetMach)))
+
+        targetCl = 0.45
+        Cls = results["totalLift"][nearestMachIndex]
+        nearestClIndex = np.argmin(np.abs(np.subtract(Cls, targetCl)))
+
+        mach = results["machs"][nearestMachIndex]
+        Cl = results["totalLift"][nearestMachIndex][nearestClIndex]
+        alpha = results['alphas'][nearestClIndex][0]
+
+        fig, ax = plt.subplots(1, 1, dpi=200)
+
+        dragBreakdown = (results["parasiticDragTotal"][nearestMachIndex, nearestClIndex],
+                         results["inducedDrag"][nearestMachIndex, nearestClIndex],
+                         results["compDrag"][nearestMachIndex, nearestClIndex],
+                         results["miscDrag"][nearestMachIndex, nearestClIndex])
+        dragLabels = ("Parasitic", "Induced", "Compressibility", "Miscellaneous")
+
+        for i in range(len(results["machs"])):
+            mach = results["machs"][i]
+
+            bestLDIndex = np.argmax(results["liftToDrag"][i])
+            bestLD = results["liftToDrag"][i][bestLDIndex]
+
+            ax.scatter(results["totalDrag"][i][bestLDIndex], results["totalLift"][i][bestLDIndex],
+                       label=f"M = {mach:.3f}, max L/D = {bestLD:.2f}")
+            ax.plot(results["totalDrag"][i], results["totalLift"][i])
+
+        ax.set_xlim(0)
+        ax.set_ylim(0)
+
+        ax.set_xlabel("Aircraft drag coefficient")
+        ax.set_ylabel("Aircraft lift coefficient")
+        ax.legend()
+        ax.grid()
+
+        fig = plt.figure(dpi=200)
+        ax2 = fig.add_subplot(121)
+        ax3 = fig.add_subplot(122)
+        fig.tight_layout()
+        fig.subplots_adjust(wspace=0)
+
+        # Drag breakdown by cause
+        angle = -180*dragBreakdown[0]/np.sum(dragBreakdown)
+        explode = np.zeros_like(dragBreakdown)
+        explode[0] = 0.1
+        ax2.pie(dragBreakdown, labels=dragLabels, autopct="%1.1f%%", startangle=angle, explode=explode)
+        fig.suptitle(f"{Aircraft.dispName} drag breakdown at M = {mach:.3f}, $C_L$ = {Cl:.3f}"\
+                     r" ($\alpha$ = "+f"{180*alpha/np.pi:.2f}"+r"$^{\circ}$),"\
+                     f" $C_D$ = {np.sum(dragBreakdown):.4f}")
+        
+        # Component breakdown for parasitic drag
+        parasiticDragFull = results["parasiticDragFull"][nearestMachIndex][nearestClIndex]
+
+        parasiticBreakdown = [parasiticDragFull["wings"]["htail"]["wing"][0,0,0],
+                              parasiticDragFull["wings"]["vtail"]["wing"][0,0,0],
+                              parasiticDragFull["wings"]["main_wing"]["wing"][0,0,0]]
+        parasiticLabels = ["Horizontal tail",
+                           "Vertical tail",
+                           "Wing"]
+
+        for fuselage, label in zip(parasiticDragFull["fuselages"], parasiticDragFull["fuselages"].keys()):
+            fuselageDrag = 0
+            for fuselageComp in fuselage.keys():
+                fuselageDrag += fuselage[fuselageComp][0,0,0]
+
+            parasiticBreakdown.append(fuselageDrag)
+            parasiticLabels.append(label)
+
+        nacelleDrag = 0
+        for nacelle in parasiticDragFull["nacelles"].keys():
+            nacelleDrag += parasiticDragFull["nacelles"][nacelle]["nacelle"][0,0,0]
+        parasiticBreakdown.append(nacelleDrag)
+        parasiticLabels.append("Nacelles")
+
+        radius2 = 0.7
+        ax3.pie(parasiticBreakdown, labels=parasiticLabels, 
+                autopct="%1.1f%%", radius=radius2, startangle=angle)
+
+        # Draw connecting lines
+        width = 0.1
+        theta1, theta2 = ax2.patches[0].theta1, ax2.patches[0].theta2
+        center, r = ax2.patches[0].center, ax2.patches[0].r
+
+        # Top
+        x = r * np.cos(np.pi / 180 * theta2) + center[0]
+        y = np.sin(np.pi / 180 * theta2) + center[1]
+        con = ConnectionPatch(xyA=(-width / 2, radius2), xyB=(x, y),
+                            coordsA="data", coordsB="data", axesA=ax3, axesB=ax2)
+        con.set_color([0, 0, 0])
+        con.set_linewidth(2)
+        ax3.add_artist(con)
+
+        # Bottom
+        x = r * np.cos(np.pi / 180 * theta1) + center[0]
+        y = np.sin(np.pi / 180 * theta1) + center[1]
+        con = ConnectionPatch(xyA=(-width / 2, -radius2), xyB=(x, y), coordsA="data",
+                            coordsB="data", axesA=ax3, axesB=ax2)
+        con.set_color([0, 0, 0])
+        ax3.add_artist(con)
+        con.set_linewidth(2)
+
+        plt.show()
 
 # Fixed range cruise flight; given payload, determine required fuel
 if False:
-    results = fixedRangeMission(Aircraft = A320Dorsal,
-                                range = 7600 * Units.km,
-                                payload = 0 * Units.kg,
+    results = fixedRangeMission(Aircraft = A320,
+                                range = 5000 * Units.km,
+                                payload = 12000 * Units.kg,
                                 climbType = "CruiseOnly",
                                 cruiseAlt = 10668 * Units.m)
     
@@ -70,7 +182,7 @@ if False:
     plt.show()
     
 # Produce payload range diagram
-if True:
+if False:
     Aircrafts = (A320, A320Dorsal)
     colours = ("red", "blue")
     i = 0
