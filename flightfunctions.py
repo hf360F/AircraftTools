@@ -6,8 +6,7 @@ from SUAVE.Core import Data, Units
 import baseline as base
 
 def aeroSweep(vehicle, alphas, machs, altitude, deltaT=0):
-    """Perform a mach/alpha sweep on a vehicle, and
-    extract total lift and drag to plot a vehicle polar.
+    """Perform a Mach/alpha sweep on a vehicle.
 
     Args:
         vehicle (SUAVE.Vehicle.Vehicle): SUAVE vehicle to perform analysis on.
@@ -17,9 +16,7 @@ def aeroSweep(vehicle, alphas, machs, altitude, deltaT=0):
         deltaT (float, optional): ISA temperature offset. Defaults to 0.
 
     Returns:
-        matplotlib.figure.Figure: Polar plot Figure object.
-        matplotlib.axes._axes.Axes: Polar plot axes object.
-        list: Aerodynamic results of type SUAVE.Core.Data.Data for each Mach.
+        dict: Dictionary of results of interest. Each entry's value is a 2D array, len(machs) x len(alphas).
     """
 
     # Results list
@@ -95,6 +92,22 @@ def aeroSweep(vehicle, alphas, machs, altitude, deltaT=0):
     return results
 
 def flightMission(Aircraft, range, fuel, payload, climbType, cruiseAlt):
+    """Fly an aircraft for one mission. Fuel burn can exceed allocated fuel load.
+
+    Args:
+        Aircraft (Container): Baseline or Derivative containing SUAVE.Vehicle.Vehicle object.
+        range (float): Total flight range, m.
+        fuel (float): Aircraft fuel load, kg.
+        payload (float): Aircraft payload, kg.
+        climbType (string): Type of aircraft climb. Must be one of 'cruiseOnly'.
+        cruiseAlt (float): Cruise altitude, m.
+
+    Raises:
+        ValueError: Climb type not supported.
+
+    Returns:
+        SUAVE.Core.Data.Data: SUAVE flight result.
+    """
 
     ## Vehicle configuration
     vehicle = Aircraft.suaveVehicle
@@ -108,8 +121,6 @@ def flightMission(Aircraft, range, fuel, payload, climbType, cruiseAlt):
         print(f"Take-off mass {(payload+fuel+vehicle.mass_properties.operating_empty):.0f} kg exceeds "\
               f"maximum {vehicle.mass_properties.max_takeoff:.0f} kg for {vehicle.tag}. Dumping fuel to clamp to max.")
         fuel -= (payload+fuel+vehicle.mass_properties.operating_empty) - vehicle.mass_properties.max_takeoff 
-
-    # Guess fuel of 0.5 of max allowable?
 
     vehicle.mass_properties.payload = payload
 
@@ -230,6 +241,23 @@ def flightMission(Aircraft, range, fuel, payload, climbType, cruiseAlt):
     return results
 
 def fixedRangeMission(Aircraft, range, payload, climbType, cruiseAlt):
+    """Fly an aircraft a fixed range with a given payload, iterate to find required fuel load.
+
+    Args:
+        Aircraft (Container): Baseline or Derivative containing SUAVE.Vehicle.Vehicle object.
+        range (float): Target toal range, m.
+        payload (float): Aircraft payload, kg.
+        climbType (string): Passed to flightFunctions.flightMission().
+        cruiseAlt (float): Passed to flightFunctions.flightMission().
+
+    Raises:
+        ValueError: Unable to converge on target range due to aircraft fuel capacity limit.
+        ValueError: Unable to converge on target range due to aircraft MTOW limit.
+        ValueError: Iteration count exceeded.
+
+    Returns:
+        _type_: _description_
+    """
     vehicle = Aircraft.suaveVehicle
     # Crude initial guess
     fuel = 0.5*np.min((vehicle.mass_properties.max_fuel,
@@ -272,26 +300,22 @@ def fixedRangeMission(Aircraft, range, payload, climbType, cruiseAlt):
 
     print(f"CONVERGED WITH FUEL LOAD {fuelLoad:.1f} kg")
 
-    """
-    resultsSummary = dict.fromkeys(["times",
-                                    "altitudes",
-                                    "densities",
-                                    "temperatures",
-                                    "pressures",
-                                    "TASs",
-                                    "CASs",
-                                    "climbRates",
-                                    "alphas",
-                                    "weights",
-                                    "lifts",
-                                    "drags",
-                                    "throtttle/thrust",
-                                    "highlift state"])
-    """
-
     return results
 
 def fixedFuelMission(Aircraft, fuel, payload, climbType, cruiseAlt):
+    """Fly an aircraft to range exhausting all given fuel with constant payload by iterating cruise range.
+
+    Args:
+        Aircraft (Container): Baseline or Derivative containing SUAVE.Vehicle.Vehicle object.
+        fuel (float): Aircraft fuel load, kg.
+        payload (float): Aircraft payload, kg.
+        climbType (string): Passed to flightFunctions.flightMission().
+        cruiseAlt (float): Passed to flightFunctions.flightMission().
+
+    Raises:
+        ValueError: Iteration count exceeded.
+    """
+
     vehicle = Aircraft.suaveVehicle
     vehicle.mass_properties.fuel = fuel
     vehicle.mass_properties.takeoff = vehicle.mass_properties.operating_empty + fuel + payload
