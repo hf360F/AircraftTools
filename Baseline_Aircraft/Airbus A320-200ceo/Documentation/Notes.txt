@@ -1,0 +1,12 @@
+Using 3-tank A320-200 series.
+
+Maximum ceritified masses for A320-211/212/231, variant 000.
+
+Engine choice CFM56-5A3:
+118 kN static thrust
+BPR 6.2
+OPR 31.3
+173 cm fan dia
+1 fan, 3 LPC, 9 HPC, 1 HPT, 4 LPT
+
+Wing section is the Boeing BACXXX, as a generic supercritical airfoil.
