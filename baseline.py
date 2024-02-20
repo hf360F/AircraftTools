@@ -24,7 +24,7 @@ class Baseline:
         self.fuels = {"Jet-A": SUAVE.Attributes.Propellants.Jet_A(),
                       "LH2": SUAVE.Attributes.Propellants.Liquid_H2()}
         self.dispNames = ("Airbus A320-200ceo",
-                          "Airbus A320-200ceoMOD") # Temporary
+                          "Airbus A320-200ceoMOD", "Airbus A320-200ceoMOD_SD", "Airbus A320-200ceoMOD_Short") # Temporary
         
         if self.dispName not in self.dispNames:
             raise NotImplementedError(f"Invalid display name '{self.dispName}'. Must be one of {self.dispNames}.")
@@ -97,34 +97,7 @@ class Baseline:
         # Accessory drive and control configuration
         self.suaveVehicle.systems.control = "fully powered"
         self.suaveVehicle.systems.accessories = aircraftEntry["Market segment"].values[0]
-
-        ## Setup control surfaces / HL devices?
-        flap = SUAVE.Components.Wings.Control_Surfaces.Flap() 
-        flap.tag = "flap"
-        flap.span_fraction_start = 0.20 
-        flap.span_fraction_end = 0.70   
-        flap.deflection = 0.0 * Units.degrees
-        # Flap configuration types are used in computing maximum CL and noise
-        flap.configuration_type = "single_slotted"
-        flap.chord_fraction = 0.085   
-        self.suaveVehicle["wings"]["main_wing"].append_control_surface(flap)
-            
-        slat = SUAVE.Components.Wings.Control_Surfaces.Slat() 
-        slat.tag = "slat" 
-        slat.span_fraction_start = 0.04 
-        slat.span_fraction_end = 0.92     
-        slat.deflection = 0.0 * Units.degrees
-        slat.chord_fractions = 0.12 	 
-        self.suaveVehicle["wings"]["main_wing"].append_control_surface(slat)
-            
-        aileron = SUAVE.Components.Wings.Control_Surfaces.Aileron() 
-        aileron.tag = "aileron"
-        aileron.span_fraction_start = 0.76 
-        aileron.span_fraction_end = 0.97 
-        aileron.deflection = 0.0 * Units.degrees
-        aileron.chord_fraction = 0.35    
-        self.suaveVehicle["wings"]["main_wing"].append_control_surface(aileron) 
-
+       
         ## Engine nacelles
         if aircraftEntry['Number of engines'].values[0] != 2:
             raise ValueError(f"Baseline class only supports twin engine designs ({aircraftEntry['Number of engines'].values[0]} provided).")
@@ -138,7 +111,7 @@ class Baseline:
         nacelle_1.origin = [[aircraftEntry["Nacelle x, m"].values[0] * Units.m,
                              aircraftEntry["Nacelle y, m"].values[0] * Units.m,
                              aircraftEntry["Nacelle z, m"].values[0] * Units.m]]
-        nacelle_1.flow_through = True  
+        nacelle_1.flow_through = True
         nacelle_airfoil  = SUAVE.Components.Airfoils.Airfoil() 
         nacelle_airfoil.naca_4_series_airfoil = "2410"
         nacelle_1.append_airfoil(nacelle_airfoil)
