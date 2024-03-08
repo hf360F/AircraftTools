@@ -2,6 +2,7 @@ import numpy as np
 from copy import deepcopy
 import matplotlib.pyplot as plt
 from matplotlib.patches import ConnectionPatch
+from tqdm import tqdm
 
 import baseline as base
 from flightFunctions import *
@@ -13,9 +14,12 @@ from SUAVE.Input_Output.OpenVSP.vsp_read import vsp_read
 
 A320 = base.Baseline("Airbus A320-200ceo")
 A320Dorsal = base.Baseline("Airbus A320-200ceoMOD")
+A320DorsalSmallD = base.Baseline("Airbus A320-200ceoMOD_SD")
+A320DorsalShort = base.Baseline("Airbus A320-200ceoMOD_Short")
 
-#print(fuel)
-#raise ValueError("Done")
+#print(A320.climbStages, A320.climbRates, A320.climbIASs, A320.climbEndAlts)
+#A320.showVehicleGeom()
+#plt.show()
 
 # Derivative for A320: targeting 9000 kg LH2 capacity
 # ~130 m^2 tank volume
@@ -53,17 +57,17 @@ def plot_mission(results,line_style='bo-'):
         
     return
 
-# Drag polar
-if True:
+# Drag polar and breakdown
+if False:
     Aircrafts = (A320, A320Dorsal)
     colours = ("red", "blue")
     i = 0
 
     for Aircraft in Aircrafts:
         results = aeroSweep(vehicle = Aircraft.suaveVehicle,
-                                    alphas = np.linspace(-1*np.pi/180, 6*np.pi/180, 100),
-                                    machs = np.array([0.1, 0.6, Aircraft.cruise_mach]),
-                                    altitude = 10668)
+                            alphas = np.linspace(-1*np.pi/180, 6*np.pi/180, 100),
+                            machs = np.array([0.1, 0.6, Aircraft.cruise_mach]),
+                            altitude = 10668)
         
         targetMach = Aircraft.cruise_mach
         nearestMachIndex = np.argmin(np.abs(np.subtract(results["machs"], targetMach)))
@@ -96,7 +100,7 @@ if True:
 
         ax.set_xlim(0)
         ax.set_ylim(0)
-
+        ax.set_title(f"{Aircraft.dispName} drag polar at {results['altitude']:.0f} m")
         ax.set_xlabel("Aircraft drag coefficient")
         ax.set_ylabel("Aircraft lift coefficient")
         ax.legend()
@@ -108,12 +112,22 @@ if True:
         fig.tight_layout()
         fig.subplots_adjust(wspace=0)
 
+        def formatter1(rel_val):
+            abs_val = rel_val*np.sum(dragBreakdown)/100
+            pct = rel_val
+            return f"{pct:.1f}% ({abs_val:.4f})"
+        
+        def formatter2(rel_val):
+            abs_val = rel_val*dragBreakdown[0]/100
+            pct = rel_val
+            return f"{pct:.1f}% ({abs_val:.4f})"
+
         # Drag breakdown by cause
         angle = -180*dragBreakdown[0]/np.sum(dragBreakdown)
         explode = np.zeros_like(dragBreakdown)
         explode[0] = 0.1
-        ax2.pie(dragBreakdown, labels=dragLabels, autopct="%1.1f%%", startangle=angle, explode=explode)
-        fig.suptitle(f"{Aircraft.dispName} drag breakdown at M = {mach:.3f}, $C_L$ = {Cl:.3f}"\
+        ax2.pie(dragBreakdown, labels=dragLabels, autopct=formatter1, startangle=angle, explode=explode)
+        fig.suptitle(f"{Aircraft.dispName} drag breakdown\nM = {mach:.3f}, h = {results['altitude']:.0f} m, $C_L$ = {Cl:.3f}"\
                      r" ($\alpha$ = "+f"{180*alpha/np.pi:.2f}"+r"$^{\circ}$),"\
                      f" $C_D$ = {np.sum(dragBreakdown):.4f}")
         
@@ -126,6 +140,8 @@ if True:
         parasiticLabels = ["Horizontal tail",
                            "Vertical tail",
                            "Wing"]
+
+        #print(parasiticDragFull)
 
         for fuselage, label in zip(parasiticDragFull["fuselages"], parasiticDragFull["fuselages"].keys()):
             fuselageDrag = 0
@@ -143,7 +159,7 @@ if True:
 
         radius2 = 0.7
         ax3.pie(parasiticBreakdown, labels=parasiticLabels, 
-                autopct="%1.1f%%", radius=radius2, startangle=angle)
+                autopct=formatter2, radius=radius2, startangle=angle)
 
         # Draw connecting lines
         width = 0.1
@@ -168,30 +184,32 @@ if True:
         ax3.add_artist(con)
         con.set_linewidth(2)
 
-        plt.show()
+    plt.show()
 
 # Fixed range cruise flight; given payload, determine required fuel
 if False:
-    results = fixedRangeMission(Aircraft = A320,
-                                range = 5000 * Units.km,
-                                payload = 12000 * Units.kg,
-                                climbType = "CruiseOnly",
+    results = fixedRangeMission(Aircraft = A320Dorsal,
+                                range = 3500 * Units.km,
+                                payload = 5000 * Units.kg,
+                                climbType = "AircraftDefined",
                                 cruiseAlt = 10668 * Units.m)
     
     plot_mission(results)
     plt.show()
     
-# Produce payload range diagram
-if False:
+# Produce payload range diagrams
+if True:
+    ncols = 160
     Aircrafts = (A320, A320Dorsal)
-    colours = ("red", "blue")
+    colours = ("red", "blue", "green")
     i = 0
 
     fig, ax = plt.subplots(1, 1, dpi=200)
 
+    pbar1 = tqdm.tqdm(total=len(Aircrafts), position=1, desc=f"Building payload-range diagram", ncols=ncols)
+    pbars = []
     for Aircraft in Aircrafts:
         vehicle = Aircraft.suaveVehicle
-
 
         payloads = [vehicle.mass_properties.max_payload, vehicle.mass_properties.max_payload, 0, 0]
         fuels = [0, 0, vehicle.mass_properties.max_fuel, vehicle.mass_properties.max_fuel]
@@ -201,18 +219,26 @@ if False:
 
         ranges = np.zeros_like(payloads)
 
+        pbars.append(tqdm.tqdm(total=len(payloads)-1, position=2+i, desc=F"  {Aircrafts[i].dispName} Flight 1", ncols=ncols))
         for j in range(1, len(payloads)):
-            results = fixedFuelMission(Aircraft = Aircraft,
-                                       fuel = fuels[j],
-                                       payload = payloads[j],
-                                       climbType = "CruiseOnly",
-                                       cruiseAlt = 10668 * Units.m)
+            if fuels[j] == 0:
+                ranges[j] = 0
+            else:
+                results =  fixedFuelMission(Aircraft = Aircraft,
+                                        fuel = fuels[j],
+                                        payload = payloads[j],
+                                        climbType = "AircraftDefined",
+                                        cruiseAlt = 10668 * Units.m)
 
-            ranges[j] = results.segments[-1].distance
+                ranges[j] = results.segments[-1].conditions.frames.inertial.aircraft_range[-1,0]
+            
+            pbars[-1].update(1)
+            pbars[-1].set_description(f"    {Aircrafts[i].dispName} Flight {j}")
 
         ax.plot(np.divide(ranges, 1000), np.divide(payloads, 1000), color=colours[i], label=Aircraft.dispName)
- 
         i += 1
+        pbar1.update(1)
+    tqdm.tqdm.write("Finished building payload-range diagram.")
 
     ax.set_xlim(0)
     ax.set_ylim(0)
