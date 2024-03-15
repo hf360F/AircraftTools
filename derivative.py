@@ -4,9 +4,13 @@ import scipy.interpolate, scipy.optimize
 import baseline as base
 import matplotlib.pyplot as plt
 from copy import deepcopy
+from tqdm import tqdm
 import shapely
+import os
 
+import openvsp as vsp
 import SUAVE
+from SUAVE.Input_Output.OpenVSP.vsp_read import vsp_read
 
 class Derivative:
     def __init__(self, baseline, modName):
@@ -21,7 +25,9 @@ class Derivative:
 
         self.modName = modName
         self.dispName = self.baseline.dispName + "_" + self.modName
-        
+        self.path = os.path.join("./Derivative_Aircraft/", self.dispName) 
+        os.makedirs(self.path, exist_ok=True)
+
         self.complete = False
         self.suaveVehicle = self.baseline.suaveVehicle
         
@@ -40,114 +46,505 @@ class Derivative:
         self.descentEASs = self.baseline.descentEASs
         self.descentMachs = self.baseline.descentMachs
 
-    def ConvertToLH2(self,
-                     tankStyle = "DorsalOnly",
-                     ventPressure = 1.5,
-                     tankCapacity = 110,
-                     tankAspect = 10,
-                     insulationThickness = 0.1,
-                     ullageFraction = 0.05,
-                     dorsalFairingBlending="default"):
-    
-        # Convert energy network to liquid hydrogen
-        self.suaveVehicle.networks.turbofan.combustor.fuel_data = SUAVE.Attributes.Propellants.Liquid_H2()
-        self.suaveVehicle.networks.turbofan.combustor.fuel_data.specific_energy = 119.6E6 # MJ/kg
+    def ConvertToLH2(self, tankStyle, 
+                     dorsalTank=None, dorsalxStart=None, dorsalxsecNum=10, dorsalzOffset=0,
+                     Sfront=2.0, Dfront=0.12, Saft=3.0, Daft=0.5,
+                     internalTank=None):
+        self.tankStyle = tankStyle
+        self.dorsalTank = dorsalTank
+        self.dorsalxStart = dorsalxStart
+        self.dorsalxsecNum = dorsalxsecNum
+        self.dorsalzOffset = dorsalzOffset
+        self.internalTank = None
 
-        # Hydrogen state lookup from vent pressure setting
-        result = scipy.optimize.minimize_scalar(lambda T: abs(psatH2(T) - ventPressure),
-                                                bounds = (np.min(Ts), np.max(Ts)))
-        if result.success is False:
-            raise ValueError(f"Failed to lookup saturation temperature for tank vent pressure {ventPressure/1E5:.2f} bar")
+        tankStyles = ("DorsalOnly")
+        if self.tankStyle not in tankStyles:
+            raise ValueError(f"Tank style '{self.tankStyle}' not implemented, must be one of '{tankStyles}'.")
+        
+        if tankStyle == "DorsalOnly":
+            if self.dorsalTank is None:
+                raise ValueError(f"Tank style '{self.tankStyle}' requires a Tank instance for argument 'dorsalTank'.")
+            if self.dorsalxStart is None:
+                raise ValueError(f"Tank style '{self.tankStyle}' requires a dorsal tank start position.")
 
-        T_sat = result.x
-        rho_lsat = rholH2(T_sat)
-        rho_vsat = rhovH2(T_sat)
-        print(f"Tank saturation temperature is {T_sat:.1f} K, liquid, vapour densities are {rho_lsat:.1f} kg/m^3, {rho_vsat:.1f} kg/m^3.")
+            # Generate fairing profile
+            print("Generating fairing...")
+            self.dorsalFairingxs, self.dorsalFairingys = self.genDorsalFairing(self.dorsalTank, Sfront, Dfront, Saft, Daft)
+            self.dorsalxEnd = self.dorsalxStart + np.max(self.dorsalFairingxs)
 
-        # Note that tank is not empty with zero hydrogen mass due to mass of vapour
-        usableFuel = (1 - ullageFraction)*(rho_lsat - rho_vsat)*tankCapacity
-        print(f"Usable liquid hydrogen {usableFuel:.1f} kg")
-        # Include vapour mass in tank 'dry' mass
+            # Fairing interpolation function
+            fairingInterp = lambda x: np.interp(x, self.dorsalFairingxs, self.dorsalFairingys)
+            self.fairingProfile = lambda x: fairingInterp(x) if x >= 0 and x <= np.max(self.dorsalFairingxs)  else 0
 
-        etaGrav = 0.70 # Gravimetric efficiency
-        structuralMass = usableFuel*(1/etaGrav - 1)
-        emptyMass = structuralMass + (tankCapacity*rho_vsat)
-        print(f"Tank empty mass is {emptyMass:.1f} kg, of which {emptyMass-structuralMass:.1f} kg is vapour\n")
+            print("Generated!")
+            # Add fairing to OpenVSP and create suaveVehicle
+            self.addDorsalGeom(dorsalxStart, dorsalxsecNum)
 
-        if tankStyle is "DorsalOnly":
             # Move all fuel inboard: baseline MZFW = derivative MTOW
-            self.suaveVehicle.mass_properties.operating_empty = self.baseline.suaveVehicle.mass_properties.operating_empty + emptyMass
+            self.suaveVehicle.mass_properties.operating_empty = self.baseline.suaveVehicle.mass_properties.operating_empty + self.dorsalTank.m_empty
             self.suaveVehicle.mass_properties.max_takeoff = self.baseline.suaveVehicle.mass_properties.max_zero_fuel
             self.suaveVehicle.mass_properties.max_zero_fuel = self.suaveVehicle.mass_properties.max_takeoff
             self.suaveVehicle.mass_properties.max_payload = self.suaveVehicle.mass_properties.max_zero_fuel - self.suaveVehicle.mass_properties.operating_empty
-            self.suaveVehicle.mass_properties.max_fuel = usableFuel
+            self.suaveVehicle.mass_properties.max_fuel = self.dorsalTank.usableLH2
 
-        self.complete = True
+            # Perform combustor LH2 conversion
+            self.suaveVehicle.networks.turbofan.combustor.fuel_data = SUAVE.Attributes.Propellants.Liquid_H2()
+            self.suaveVehicle.networks.turbofan.combustor.fuel_data.specific_energy = 119.9E6 # MJ/kg, override to LCV from SUAVE default (HCV)
 
-    def updateDerivGeom(tankType="dorsal", tankCapacity=10):
-        # Create new derived OpenVSP
-        pass
+    def genDorsalFairing(self, tank, Sfront, Dfront, Saft, Daft, show=False):
+        """Generate a minimum area fairing profile for a tank and add it to OpenVSP geometry.
 
-    def updateSUAVEvehicle():
-        # check if createDerivGeom has been run at least once
-        pass
+        Args:
+            tank (Tank): Instance of tank object.
+            Sfront (float): Dimensionless parameter controlling front fairing angle meeting fuselage.
+            Dfront (float): Dimensionless parameter relating front fairing length to tank diameters.
+            Saft (float): Dimensionless parameter controlling front fairing angle meeting fuselage.
+            Daft (float): Dimensionless parameter relating front fairing length to tank diameters.
+            show (bool): Plot fairing and tank geometry.
+        
+        Returns:
+            (list), (list): x and y co-ordinate arrays of fairing OML
+        """
+
+        ## Used for fairing generation
+        Lfront = Dfront*tank.Do
+        Laft = Daft*tank.Do
+
+        def fairingFront(x, A1, L1=Lfront, S1=Sfront):
+            def logistic1(x, A=A1, L=L1):
+                return 1/(1 + np.exp(-(x-A)/L)) - 0.5
+            front = (logistic1(x-S1*L1) - logistic1(A1-S1*L1))/(1 - 2*logistic1(A1-S1*L1))
+            return 2*front
+    
+        def fairingAft(x, A2, L2=Lfront, S2=Saft):
+            def logistic2(x, A=A2, L=L2):
+                return 1/(1 + np.exp((x-A)/L)) - 0.5
+            aft = (logistic2(x+S2*L2) - logistic2(A2+S2*L2))/(1 + 2*logistic2(A2-S2*L2))
+            return 2*(aft-0.5)
+        
+        # Find fairing end lengths
+        tol = 1E-3
+        frontsoln = scipy.optimize.minimize_scalar(lambda x: np.abs(fairingFront(x, A1=0, L1=Lfront, S1=Sfront) - (1-tol)), bounds=(0, tank.Lo))
+        aftsoln = scipy.optimize.minimize_scalar(lambda x: np.abs(fairingAft(x, A2=0, L2=Laft, S2=Saft) + 1 - (1-tol)), bounds=(-tank.Lo, 0))
+
+        ## Extract one end of the tank for fairing fitting.
+        tankxs = tank.vesselPoly.exterior.xy[0]
+        tankys = tank.vesselPoly.exterior.xy[1]
+
+        # Slice front end of tank, only want top half (need monotonic increasing)
+        tankEndxs, tankEndys = [], []
+        for i in range(len(tankxs)):
+            if tankxs[i] < tank.endLength:
+                if tankys[i] > 0:
+                    tankEndxs.append(tankxs[i])
+                    tankEndys.append(tankys[i])
+
+        # Drop vertical and add height offset to match fairing (y = 0 is bottom of tank)
+        tankEndxs = np.concatenate(([tankEndxs[0]], tankEndxs))
+        tankEndys = np.concatenate(([0], np.add(tankEndys, tank.Do/2)))
+        tankInterp = lambda x: np.interp(x, tankEndxs, tankEndys)
+
+        # Function for positioning fairing ends relative to tank
+        def offsetError(xOffset, fairingxs, fairingInterp, show=False):
+            # Offset tank interpolator
+            tankEndOffsetxs = np.add(tankEndxs, xOffset)
+            tankInterpOffset = lambda x: tankInterp(x-xOffset)
+
+            # Union of x arrays
+            xcomb = [x for x in sorted(np.concatenate((tankEndOffsetxs, fairingxs))) if x <= np.min(xOffset+tank.endLength)]
+
+            if show: # Display offset geometry
+                newTankys = tankInterpOffset(xcomb)
+                newFairingys = fairingInterp(xcomb)
+
+                fig, ax = plt.subplots(1, 1, dpi=200)
+                ax.set_aspect("equal")
+                ax.grid()
+                ax.plot(xcomb, newFairingys, label="Fairing")
+                ax.plot(xcomb, newTankys, label="Tank")
+                ax.legend()
+                plt.show()
+
+            # Check fairing is always higher
+            maxHeightDiff = 0
+            for x in xcomb:
+                if tankInterp(x) > fairingInterp(x):
+                    maxHeightDiff = np.max((maxHeightDiff, tankInterpOffset(x)-fairingInterp(x)))
+            if maxHeightDiff > 0:
+                return maxHeightDiff
+
+            # Minimise height difference
+            crossPosSoln = scipy.optimize.minimize_scalar(lambda x: np.abs(tankInterpOffset(x) - fairingInterp(x)),
+                                                          bounds=(np.max((np.min(xcomb), xOffset)), np.max(xcomb)))
+            
+            return crossPosSoln.fun
+
+        # Function for wetted area figure of merit and fairing profile generation
+        def fairingArea(oversizeFactor, returnGeom=False):
+            maxHeight = tank.Do*oversizeFactor
+
+            fairingResolution = 100
+            # Generate fairing profiles in this range. Note aft end is mirrored.
+            frontxs = np.linspace(0, frontsoln.x, fairingResolution)
+            frontys = [maxHeight*fairingFront(x, A1=0, L1=Lfront, S1=Sfront) for x in frontxs]
+            aftxs = np.linspace(aftsoln.x, 0, fairingResolution)
+            aftys = np.flip([maxHeight*(1+fairingAft(x, A2=0, L2=Laft, S2=Laft)) for x in aftxs])
+            aftxs = np.subtract(aftxs, aftxs[0])
+
+            # Geometry interpolation functions
+            fairingFrontInterp = lambda x: np.interp(x, frontxs, frontys)
+            fairingAftInterp = lambda x: np.interp(x, aftxs, aftys)
+
+            tol = 1E-3
+            frontOffsetSoln = scipy.optimize.minimize_scalar(offsetError, args=(frontxs, fairingFrontInterp),
+                                                             bounds=(0, np.max(frontxs)), tol=tol)
+            frontOffset = frontOffsetSoln.x
+
+            aftOffsetSoln = scipy.optimize.minimize_scalar(offsetError, args=(aftxs, fairingAftInterp),
+                                                           bounds=(0, np.max(aftxs)), tol=tol)
+            aftOffset = aftOffsetSoln.x
+
+            xs = np.linspace(-frontOffset, tank.Lo+aftOffset+frontOffset, 500)
+            ys = [maxHeight*(fairingFront(x, A1=-frontOffset, L1=Lfront, S1=Sfront)
+                             +fairingAft(x, A2=tank.Lo+aftOffset+frontOffset, L2=Laft, S2=Saft)) for x in xs]
+
+            wettedAreaProxy = np.trapz(np.power(ys, 2), xs)
+            #print(f"Oversize {oversizeFactor:.3f}: Forward offset {frontOffset:.3f} m, aft offset {aftOffset:.3f} m, area FOM {wettedAreaProxy:.1f}")
+            #print(f"(Iteration of area loop, subiterations {frontOffsetSoln.nit} + {aftOffsetSoln.nit})")
+
+            if returnGeom:
+                return np.add(xs, frontOffset), ys, frontOffset, aftOffset
+            else:
+                return wettedAreaProxy
+            
+        bestFairingSoln = scipy.optimize.minimize_scalar(fairingArea, bounds=(1, 2), tol=1E-3)
+        xs, ys, frontOffset, aftOffset = fairingArea(bestFairingSoln.x, returnGeom=True)
+
+        if show:
+            fig, ax = plt.subplots(1, 1, dpi=200)
+            ax.plot(np.add(tankxs, frontOffset), np.add(tankys, tank.Do/2), color="red")
+            ax.plot(xs, ys, color="blue")
+            ax.set_aspect("equal")
+            ax.grid()
+            ax.set_xlabel("x, $m$")
+            ax.set_ylabel("z, $m$")
+            plt.show()
+
+        return xs, ys
+
+    def addDorsalGeom(self, dorsalxStart, dorsalxsecNum, show=False):
+        print("Adding fairing to OpenVSP")
+
+        # VSP reset
+        vsp.ClearVSPModel()
+        vsp.ReadVSPFile(self.baseline.vspPath)
+        vsp.SetVSP3FileName(self.dispName)
+
+        # Vehicle and fuselage container identification
+        vehicle = vsp.FindContainer("Vehicle", 0)
+        fuselage = vsp.FindGeom("Fuselage", 0)
+        fuselage_xsecsurf = vsp.GetXSecSurf(fuselage, 0)
+        fuselage_xseccnt = vsp.GetNumXSec(fuselage_xsecsurf)
+
+        baselineXsecs, dorsalXsecs = [], []
+        # Read baseline sections        
+        ncols = 80
+        pbar = tqdm(total=fuselage_xseccnt, desc="Reading baseline fuselage", ncols=ncols)
+        # Read baseline geometry cross-sections
+        for i in range(fuselage_xseccnt):
+            xsec = {"ys": [],
+                    "zs": [],
+                    "xbar": None,
+                    "zOffset": 0,
+                    "baseline": True}
+            xs = []
+
+            XSecID = vsp.GetXSec(fuselage_xsecsurf, i)
+
+            sectionResolution = 100
+            angles = np.linspace(0, 2*np.pi, sectionResolution, endpoint=False)
+
+            if i == 0 or i == fuselage_xseccnt-1: # Points at fuselage ends
+                vec = vsp.ComputeXSecPnt(XSecID, 0)
+                xs.append(vec.x())
+                xsec["ys"].append(vec.y())
+                xsec["zs"].append(vec.z())
+            else: # Else read entire curve
+                Us = np.linspace(0, 1, sectionResolution, endpoint=False)
+                for U in Us:
+                    vec = vsp.ComputeXSecPnt(XSecID, U)
+                    xs.append(vec.x())
+                    xsec["ys"].append(vec.y())
+                    xsec["zs"].append(vec.z())
+
+            xsec["xbar"] = np.mean(xs)
+            if np.max(xs) - np.min(xs) > 0.001*xsec["xbar"]:
+                raise ValueError(f"Reference vehicle cross section {i} not orthogonal to x axis")
+
+            xsec["zOffset"] = vsp.GetParmVal(vsp.GetXSecParm(XSecID, "ZLocPercent"))
+            baselineXsecs.append(xsec)
+            pbar.update(1)
+
+        # Fuselage dimensions
+        fuselageLength = np.max([xsec["xbar"] for xsec in baselineXsecs]) - np.min([xsec["xbar"] for xsec in baselineXsecs])
+        if self.dorsalxStart + np.max(self.dorsalFairingxs) > np.max([xsec["xbar"] for xsec in baselineXsecs]):
+            raise ValueError(f"Fairing ends at x = {self.dorsalxStart + np.max(self.dorsalFairingxs):.2f} m,"+\
+                             f"fuselage ends at x = {np.max([xsec['xbar'] for xsec in baselineXsecs]):.2f} m. Try smaller aspect ratio.")
+
+        z_max = np.max([np.max(xsec["zs"]) for xsec in baselineXsecs])
+
+        # Generate dorsal cross locations, use tighter spacing at ends
+        spacingExponent = 3 # Higher exponent increases density at ends of distribution
+        mid = (self.dorsalxEnd - self.dorsalxStart)/2
+        temp = np.linspace(-mid**spacingExponent, mid**spacingExponent, num=self.dorsalxsecNum)
+        dorsalXsecPositions = np.sign(temp)*np.abs(temp)**(1/spacingExponent) + mid + self.dorsalxStart
+
+        xlist = [xsec["xbar"] for xsec in baselineXsecs]
+
+        if show:
+            ax = plt.figure().add_subplot(projection='3d')
+
+        # Interpolate baseline fuselage sections at new section locations
+        for i in range(self.dorsalxsecNum):
+            # Find two adjacent baseline sections
+            endDiffList = [x if x > 0 else np.inf for x in np.subtract(xlist, dorsalXsecPositions[i])]
+            XsecIndexEnd = np.argmin(endDiffList)
+            XsecIndexStart = XsecIndexEnd-1
+
+            xsec = {"ys": [],
+                    "zs": [],
+                    "xbar": None,
+                    "zOffset": float,
+                    "previousBaselineIndex": int,
+                    "baseline": False}
+
+            # Perform linear interpolation on properties between adjacent baseline sections
+            xsec["xbar"] = dorsalXsecPositions[i]
+            interpFraction = (xsec["xbar"]-baselineXsecs[XsecIndexStart]["xbar"])/(baselineXsecs[XsecIndexEnd]["xbar"] - baselineXsecs[XsecIndexStart]["xbar"])
+
+            xsec["ys"] = baselineXsecs[XsecIndexStart]["ys"] + interpFraction*np.subtract(baselineXsecs[XsecIndexEnd]["ys"], baselineXsecs[XsecIndexStart]["ys"])
+            xsec["zs"] = baselineXsecs[XsecIndexStart]["zs"] + interpFraction*np.subtract(baselineXsecs[XsecIndexEnd]["zs"], baselineXsecs[XsecIndexStart]["zs"])
+
+            xsec["zOffset"] = baselineXsecs[XsecIndexStart]["zOffset"] + interpFraction*np.subtract(baselineXsecs[XsecIndexEnd]["zOffset"], baselineXsecs[XsecIndexStart]["zOffset"])
+
+            xsec["previousBaselineIndex"] = int(XsecIndexStart)
+
+            dorsalXsecs.append(xsec)
+
+        # Combined list, in x-increasing order
+        derivativeXsecs = sorted(np.concatenate((baselineXsecs, dorsalXsecs)), key=lambda d: d["xbar"])
+
+        # Add fairing profile to relevant cross sections
+        for xsec in derivativeXsecs:
+            if xsec["xbar"] > self.dorsalxStart and xsec["xbar"] < self.dorsalxEnd:
+                fairingHeight = self.fairingProfile(xsec["xbar"] - self.dorsalxStart)
+
+                tankys = fairingHeight*np.cos(angles)/2
+                tankzs = z_max + fairingHeight*(1+np.sin(angles))/2 + self.dorsalzOffset
+
+                combinedys = np.concatenate((xsec["ys"], tankys))
+                combinedzs = np.concatenate((xsec["zs"], tankzs))
+
+                zippedCoords = []
+                for x, y in zip(combinedys, combinedzs):
+                    zippedCoords.append((x, y))
+
+                # Extract outer hull
+                poly = shapely.Polygon(zippedCoords)
+                outery, outerz = poly.convex_hull.exterior.xy
+
+                # Update xsec
+                xsec["ys"] = outery
+                xsec["zs"] = outerz
+            
+            # Zshift
+            xsec["zs"] = np.subtract(xsec["zs"], fuselageLength*xsec["zOffset"])
+
+            # Now find the point with smallest +y axis angle. Centre offset is needed.
+            if len(xsec["ys"]) > 1: # Check not a point
+                zippedCoords = []
+                for x, y in zip(xsec["ys"], xsec["zs"]):
+                    zippedCoords.append((x, y))
+                poly2 = shapely.Polygon(zippedCoords)
+                centrey, centrez = shapely.centroid(poly2).x, shapely.centroid(poly2).y
+            else:
+                centrey, centrez = 0, 0
+
+            #centrey, centrez = 0,0
+            yaxangles = np.arctan2(np.subtract(xsec["zs"], centrez), np.subtract(xsec["ys"], centrey))
+            indexOffset = -np.argmin(np.abs(yaxangles))
+            # Roll so closest to +y is at start
+            xsec["ys"] = np.roll(xsec["ys"], indexOffset)
+            xsec["zs"] = np.roll(xsec["zs"], indexOffset)
+
+            if show:
+                ax.plot(xsec["ys"], xsec["zs"], zs=xsec["xbar"], zdir="x", color="red")
+
+        pbar = tqdm(total=fuselage_xseccnt, desc="Updating OpenVSP fuselage (baseline)", ncols=ncols)
+
+        for i in range(fuselage_xseccnt):        
+            xsec = baselineXsecs[i]
+            if i == 0 or i == fuselage_xseccnt-1: # Start and end should be points
+                vsp.ChangeXSecShape(fuselage_xsecsurf, i, 0)
+            else:
+                # Convert OpenVSP shape to fuse file format
+                vsp.ChangeXSecShape(fuselage_xsecsurf, i, 6)
+
+                # Save coords into xsec fuse file
+                name = f"/xsec_buffer.fxs"
+                f = open(self.path+name, "w")
+                line1 = f"OPENVSP_XSEC_FILE_V1\n"
+                f.write(line1)
+                for j in range(len(xsec["ys"])):
+                    f.write(f"{xsec['ys'][j]:.4f}  {xsec['zs'][j]:.4f}\n")
+                f.write(f"{xsec['ys'][0]:.4f}  {xsec['zs'][0]:.4f}\n") # Loop back to start
+                f.close()
+
+                vspXsec = vsp.GetXSec(fuselage_xsecsurf, i)
+                vsp.ReadFileXSec(vspXsec, self.path+name)
+    
+            # Reapply the original Z position offset in OpenVSP
+            zOffId = vsp.GetXSecParm(vsp.GetXSec(fuselage_xsecsurf, i), "ZLocPercent")
+            vsp.SetParmVal(zOffId, xsec["zOffset"])
+            pbar.update(1)
+
+        # Now insert new cross-sections
+        pbar = tqdm(total=self.dorsalxsecNum, desc="Inserting new geometry", ncols=ncols)
+        for i in range(len(dorsalXsecs)):
+            xsec = dorsalXsecs[i]
+
+            # Insert new section into OpenVSP
+            vsp.InsertXSec(fuselage, xsec["previousBaselineIndex"]+i, 6)
+            # Move to correct x position
+            xOffId = vsp.GetXSecParm(vsp.GetXSec(fuselage_xsecsurf, xsec["previousBaselineIndex"]+i+1), "XLocPercent")
+            xPct = xsec["xbar"]/fuselageLength
+            vsp.SetParmValLimits(xOffId, xPct, 0, 1)
+
+            # z position
+            zOffId = vsp.GetXSecParm(vsp.GetXSec(fuselage_xsecsurf, xsec["previousBaselineIndex"]+i+1), "ZLocPercent")
+            vsp.SetParmVal(zOffId, xsec["zOffset"])
+            
+            # Save coords into xsec fuse file
+            name = f"/xsec_buffer.fxs"
+            f = open(self.path+name, "w")
+            line1 = f"OPENVSP_XSEC_FILE_V1\n"
+            f.write(line1)
+            for j in range(len(xsec["ys"])):
+                f.write(f"{xsec['ys'][j]:.4f}  {xsec['zs'][j]:.4f}\n")
+            f.write(f"{xsec['ys'][0]:.4f}  {xsec['zs'][0]:.4f}\n") # Loop back to start
+            f.close()
+
+            vspXsec = vsp.GetXSec(fuselage_xsecsurf, xsec["previousBaselineIndex"]+i+1)
+            vsp.ReadFileXSec(vspXsec, self.path+name)
+            pbar.update()
+
+        fname = self.dispName+".vsp3"
+        vsp.SetVSP3FileName(fname)
+        vsp.Update()
+        vsp.WriteVSPFile(vsp.GetVSPFileName(), 0)
+        os.replace(fname, self.path+"/"+fname)
+        self.vspfname = fname
+        print("Derivative geometry written to OpenVSP.")
+
+        # Update vehicle
+        vsp.ClearVSPModel()
+        self.suaveVehicle.fuselages = vsp_read(tag=self.path+"/"+fname,
+                                               units_type="SI",
+                                               specified_network=None,
+                                               use_scaling=True).fuselages
+        
+        if show:
+            ax.set_aspect("equal")
+            plt.show()
 
 class Tank:
-    def __init__(self, tankAspect, tankVolume, etaGrav, t_ins, fidelity="basic", endType="21elliptical", show=False):
-        self.tankAspect = tankAspect
-        self.tankVolume = tankVolume
-        self.etaGrav = etaGrav
-        self.tins = t_ins
+    def __init__(self,
+                 usableLH2,
+                 aspectRatio,
+                 ventPressure,
+                 ullageFraction,
+                 endGeometry,
+                 fidelity="Manual",
+                 etaGrav=None,
+                 t_ins=None,
+                 t_wall=None,
+                 sigma_ywall=None,
+                 lambda_wall=None,
+                 rho_wall=None,
+                 wallSafetyFactor=None,
+                 lambda_ins=None,
+                 rho_ins=None,
+                 show=False):
+
+        self.usableLH2 = usableLH2
+        self.aspectRatio = aspectRatio
+        self.ventPressure = ventPressure
+        self.ullageFraction = ullageFraction
+        self.endGeometry = endGeometry
         self.fidelity = fidelity
-        self.endType = endType
+        self.etaGrav = etaGrav
+        self.t_ins = t_ins
+        self.t_wall = t_wall
+        self.sigma_ywall = sigma_ywall
+        self.lambda_wall = lambda_wall
+        self.rho_wall = rho_wall
+        self.wallSafetyFactor = wallSafetyFactor
+        self.rho_ins = rho_ins
+        self.lambda_ins = lambda_ins
+        self.show = show
 
-        # Volume factors? (expulsion efficiency, internal components)
+        fidelityLevels = ("Overall", "Component")
+        endTypes = ("2:1elliptical")
 
-        fidelityLevels = ("basic")
-        endTypes = ("21elliptical")
+        if self.fidelity not in fidelityLevels:
+            raise ValueError(f"Tank fidelity '{self.fidelity}' is not implemented, must be one of '{fidelityLevels}'.")
+        if self.endGeometry not in endTypes:
+            raise ValueError(f"End type '{self.endGeometry}' is not implemented, must be one of '{endTypes}'.")
 
-        if fidelity not in fidelityLevels:
-            raise ValueError(f"Tank fidelity '{fidelity}' is not implemented, must be one of '{fidelityLevels}'.")
-        if endType not in endTypes:
-            raise ValueError(f"End type '{endType}' is not implemented, must be one of '{endTypes}'.")
+        if self.fidelity == "Overall":
+            reqdArgs = {"etaGrav": self.etaGrav, "t_ins": self.t_ins, "t_wall": self.t_wall}
+            for key in reqdArgs:
+                if reqdArgs[key] == None:
+                    raise ValueError(f"Fidelity level '{self.fidelity}' missing required argument '{key}'")
 
-        if fidelity == "basic":
-            if endType == "21elliptical":
+        if self.fidelity == "Overall":
+            if self.endGeometry == "2:1elliptical":
                 k_end = 0.13384 # Scaling constant: volume of 1 metre diameter end
 
-                # Perform tank sizing calculations
-                t_tot = t_ins
+                # Determine required pressure vessel volume using saturated phase densities
+                self.T_sat = scipy.optimize.minimize_scalar(lambda T: np.abs(psatH2(T) - ventPressure),
+                                                            bounds = (np.min(Ts), np.max(Ts))).x
+                self.rho_l = rholH2(self.T_sat)
+                self.rho_v = rhovH2(self.T_sat)
 
-                # Function enforcing volume for given diameter by varying length
-                newLi = lambda Di: Di/2 + 4*(tankVolume - 2*k_end*Di**3)/(np.pi*(Di**2))
+                self.tankCapacity = self.usableLH2/((1 - self.ullageFraction)*(self.rho_l - self.rho_v))
+                print(f"Usable LH2 {self.usableLH2:.1f} kg requires tank volume {self.tankCapacity:.1f} m^3 (effective density {self.usableLH2/self.tankCapacity:.1f} kg/m^3)")
 
-                # Initial guess of internal pressure vessel dimensions
-                Di = np.power(4*tankVolume/(np.pi*tankAspect), 1/3) # Cylinder with flat ends
-                Li = newLi(Di)
-                currentAR = (Li+2*t_tot)/(Di+2*t_tot)
+                self.m_struct = self.usableLH2*(1/self.etaGrav - 1)
+                self.m_empty = self.m_struct + self.tankCapacity*self.rho_v
+                print(f"Vessel structural weight {self.m_struct:.1f} kg, empty weight {self.m_empty:.1f} kg including vapour")
 
-                i = 0
-                tol = 1E-5
-                i_max = 100
+                # Total wall thickness
+                self.t_tot = self.t_ins + self.t_wall
 
-                while abs(currentAR/tankAspect -1) > tol:
-                    i += 1
-                    if i >= i_max:
-                        raise ValueError(f"Vessel design failed to converge. Iteration {i}: Di = {Di:.2f} m, Li = {Li:.2f} m")
-                    Di *= (currentAR/tankAspect)**(1/3)
-                    Li = newLi(Di)
+                # Function enforcing volume for given ID by varying length
+                newLi = lambda Di: Di/2 + 4*(self.tankCapacity - 2*k_end*Di**3)/(np.pi*(Di**2))
 
-                    currentAR = (Li+2*t_tot)/(Di+2*t_tot)
+                # Error in aspect ratio for given ID
+                ARresidual = lambda Di: np.abs((newLi(Di)+2*self.t_tot)/(Di+2*self.t_tot) - self.aspectRatio)
 
-                if Li < Di/2:
-                    raise ValueError(f"Negative cylinder length ({Li-Di/2:.2f} m): aspect ratio is unreachable.")
+                soln = scipy.optimize.minimize_scalar(ARresidual)
+                self.Di = soln.x
+                self.Li = newLi(self.Di)
 
-                print(f"Vessel design converged in {i} iterations.")
-                self.Di = Di
-                self.Do = self.Di + 2*t_tot
-                self.endLength = self.Di/4 + t_tot
-                self.Li = Li
-                self.Lo = self.Li + 2*t_tot
+                if self.Li < self.Di/2:
+                    raise ValueError(f"Negative cylinder length ({self.Li-self.Di/2:.2f} m): aspect ratio is unreachable.")
+
+                self.Do = self.Di + 2*self.t_tot
+                self.Lo = self.Li + 2*self.t_tot
+                self.endLength = self.Di/4 + self.t_tot
+
+                print(f"Vessel geometry converged with external diameter {self.Do:.2f} m, length {self.Lo:.2f} m")
 
                 # Generate tank profile
                 CR = self.Di*0.9045
@@ -167,7 +564,7 @@ class Tank:
 
                 # Internal vessel co-ordinates
                 tankxs = np.concatenate((-endxs, np.add(endxs, self.Li), [-endxs[0]]))
-                tankxs = np.subtract(tankxs, np.min(tankxs)-t_tot) # Zero position offset
+                tankxs = np.subtract(tankxs, np.min(tankxs)-self.t_tot) # Zero position offset
                 tankys = np.concatenate((np.flip(endys), endys, [endys[-1]]))
 
                 tankxys = []
@@ -175,7 +572,7 @@ class Tank:
                     tankxys.append((x, y))
 
                 internalPoly = shapely.Polygon(tankxys)
-                self.vesselPoly = internalPoly.buffer(t_tot)
+                self.vesselPoly = internalPoly.buffer(self.t_tot)
 
                 if show:
                     fig, ax = plt.subplots(1, 1, dpi=200)
@@ -186,10 +583,7 @@ class Tank:
                     plt.show()
             
         else:
-            pass
-            # Define materials
-                # structure: AA2219 / AA2195, composite?, SS 304/L and/or SS 316/L
-                # insulation: 
+            raise ValueError("Fidelity level implementation not complete!") 
 
 
 # Hydrogen state data, NIST webbook

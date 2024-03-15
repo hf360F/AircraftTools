@@ -5,28 +5,40 @@ from matplotlib.patches import ConnectionPatch
 from tqdm import tqdm
 
 import baseline as base
+import derivative as dv
 from flightFunctions import *
 import SUAVE
 import openvsp as vsp
 from SUAVE.Core import Data, Units
 from SUAVE.Plots.Performance.Mission_Plots import *
 from SUAVE.Input_Output.OpenVSP.vsp_read import vsp_read
+from copy import deepcopy
 
 A320 = base.Baseline("Airbus A320-200ceo")
-A320Dorsal = base.Baseline("Airbus A320-200ceoMOD")
-A320DorsalSmallD = base.Baseline("Airbus A320-200ceoMOD_SD")
-A320DorsalShort = base.Baseline("Airbus A320-200ceoMOD_Short")
 
-#print(A320.climbStages, A320.climbRates, A320.climbIASs, A320.climbEndAlts)
-#A320.showVehicleGeom()
-#plt.show()
+# A320 dorsal tank derivative
+H2_A320_stock = dv.Derivative(A320, "H2_MZFW+0")
+tank1 = dv.Tank(usableLH2=7600.0,
+                ventPressure=1.5,
+                aspectRatio=6.0,
+                ullageFraction=0.05,
+                endGeometry="2:1elliptical",
+                fidelity="Overall",
+                etaGrav=0.55,
+                t_ins=0.15,
+                t_wall=0.005,
+                show=False)
+H2_A320_stock.ConvertToLH2(tankStyle="DorsalOnly",
+                     dorsalTank=tank1, dorsalxsecNum=10, dorsalxStart=3.0,
+                     Sfront=2.5, Dfront=0.15, Saft=3.5, Daft=0.35)
 
-# Derivative for A320: targeting 9000 kg LH2 capacity
-# ~130 m^2 tank volume
-# 3 m diameter external, assumed 2.8 m internal
-# Gives cylindrical length 21 m (90% of total length)
-# Gravimetric efficiency is 75% = h2 / total
-# Gives 3000 kg dry weight
+# Uprated MZFW to A321 value
+H2_A320_MZFWplus = deepcopy(H2_A320_stock)
+H2_A320_MZFWplus.modName = "H2_MZFW+10T"
+H2_A320_MZFWplus.dispName = H2_A320_MZFWplus.baseline.dispName + "_" + H2_A320_MZFWplus.modName
+H2_A320_MZFWplus.suaveVehicle.mass_properties.max_zero_fuel += 10000.0
+H2_A320_MZFWplus.suaveVehicle.mass_properties.max_takeoff = H2_A320_MZFWplus.suaveVehicle.mass_properties.max_zero_fuel
+H2_A320_MZFWplus.suaveVehicle.mass_properties.max_payload = H2_A320_MZFWplus.suaveVehicle.mass_properties.max_zero_fuel - H2_A320_MZFWplus.suaveVehicle.mass_properties.operating_empty
 
 def plot_mission(results,line_style='bo-'):
     """This function plots the results of the mission analysis and saves those results to 
@@ -59,7 +71,7 @@ def plot_mission(results,line_style='bo-'):
 
 # Drag polar and breakdown
 if False:
-    Aircrafts = (A320, A320Dorsal)
+    Aircrafts = (A320, H2_A320)
     colours = ("red", "blue")
     i = 0
 
@@ -199,14 +211,14 @@ if False:
     
 # Produce payload range diagrams
 if True:
-    ncols = 160
-    Aircrafts = (A320, A320Dorsal)
-    colours = ("red", "blue", "green")
+    ncols = 80
+    Aircrafts = (A320, H2_A320_stock, H2_A320_MZFWplus)
+    colours = ("red", "lightblue", "navy")
     i = 0
 
     fig, ax = plt.subplots(1, 1, dpi=200)
 
-    pbar1 = tqdm.tqdm(total=len(Aircrafts), position=1, desc=f"Building payload-range diagram", ncols=ncols)
+    pbar1 = tqdm.tqdm(total=len(Aircrafts), position=1, desc=f"Payload-range diagram", ncols=ncols)
     pbars = []
     for Aircraft in Aircrafts:
         vehicle = Aircraft.suaveVehicle
@@ -217,23 +229,34 @@ if True:
         payloads[2] = vehicle.mass_properties.max_takeoff - (vehicle.mass_properties.operating_empty + fuels[2])
         fuels[1] = vehicle.mass_properties.max_takeoff - (vehicle.mass_properties.operating_empty + payloads[1])
 
+        for k in range(len(payloads)):
+            payload = payloads[k]
+            if payload < 0:
+                print(f"Invalid payload {payload/1000:.2f} tonnes, setting to zero.")
+                payloads[k] = 0
+
         ranges = np.zeros_like(payloads)
 
-        pbars.append(tqdm.tqdm(total=len(payloads)-1, position=2+i, desc=F"  {Aircrafts[i].dispName} Flight 1", ncols=ncols))
+        pbars.append(tqdm.tqdm(total=len(payloads)-1, position=2+i, desc=f"  {Aircrafts[i].dispName}", ncols=ncols))
         for j in range(1, len(payloads)):
             if fuels[j] == 0:
                 ranges[j] = 0
             else:
+                t_max = endurance(Aircraft, payload=payloads[j], fuel=fuels[j])
+
+                # Reserves for ICAO Annex 6 without a destination aerodrome
+                fuelReserve = np.max((fuels[j]*5*60/t_max, 0.05*fuels[j])) + ((30+15)*60)*fuels[j]/t_max
+
                 results =  fixedFuelMission(Aircraft = Aircraft,
-                                        fuel = fuels[j],
-                                        payload = payloads[j],
-                                        climbType = "AircraftDefined",
-                                        cruiseAlt = 10668 * Units.m)
+                                            fuel = fuels[j],
+                                            fuelReserve = fuelReserve,
+                                            payload = payloads[j],
+                                            climbType = "AircraftDefined",
+                                            cruiseAlt = 10668 * Units.m)
 
                 ranges[j] = results.segments[-1].conditions.frames.inertial.aircraft_range[-1,0]
             
             pbars[-1].update(1)
-            pbars[-1].set_description(f"    {Aircrafts[i].dispName} Flight {j}")
 
         ax.plot(np.divide(ranges, 1000), np.divide(payloads, 1000), color=colours[i], label=Aircraft.dispName)
         i += 1

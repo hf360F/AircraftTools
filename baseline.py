@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import ast
 from copy import deepcopy
 
 import openvsp as vsp
@@ -105,6 +106,7 @@ class Baseline:
         nacelle_1 = SUAVE.Components.Nacelles.Nacelle()
         nacelle_1.tag = "nacelle_1"
         nacelle_1.length = engineEntry["Nacelle length, m"].values[0] * Units.m
+        nacelle_1.length = 2.0 * Units.m
         nacelle_1.inlet_diameter = engineEntry["Nacelle inlet diameter, m"].values[0] * Units.m
         nacelle_1.diameter = engineEntry["Nacelle diameter, m"].values[0] * Units.m
         nacelle_1.areas.wetted = 1.1*np.pi*nacelle_1.diameter*nacelle_1.length
@@ -234,6 +236,58 @@ class Baseline:
         turbofan_sizing(turbofan, designMach, designAltitude)   
 
         self.suaveVehicle.append_component(turbofan)  
+
+        ## Aircraft-specific climb profile
+        self.climbStages = int(aircraftEntry["Climb stages"].values[0])
+        self.climbRates = ast.literal_eval(aircraftEntry["Climb rates, fpm"].values[0])
+        self.climbEndAlts = ast.literal_eval(aircraftEntry["Climb end altitudes, ft"].values[0])
+        try:
+            self.climbEASs = ast.literal_eval(aircraftEntry["Climb EASs, kts"].values[0])
+        except:
+            try:
+                self.climbEASs = [aircraftEntry["Climb EASs, kts"].values[0]]
+            except:
+                self.climbEASs = []
+        try:
+            self.climbMachs = ast.literal_eval(aircraftEntry["Climb Machs"].values[0])
+        except:
+            try:
+                self.climbMachs = [aircraftEntry["Climb Machs"].values[0]]
+            except:
+                self.climbMachs = []
+
+        if len(self.climbRates) != self.climbStages:
+            raise ValueError(f"Specified {len(self.climbEndAlts)} climb stage climb rates, but the total number of climb stages is {self.climbStages}.")
+        if len(self.climbEndAlts) != self.climbStages:
+            raise ValueError(f"Specified {len(self.climbEndAlts)} climb stage end altitudes, but the total number of climb stages is {self.climbStages}.")
+        if len(self.climbMachs) + len(self.climbEASs) != self.climbStages:
+            raise ValueError(f"Specified {len(self.climbEASs)} constant IAS and {len(self.climbMachs)} constant Mach climb stages, but the total number of climb stages is {self.climbStages}.")
+
+        # Descent profile
+        self.descentStages = int(aircraftEntry["Descent stages"].values[0])
+        self.descentRates = ast.literal_eval(aircraftEntry["Descent rates, fpm"].values[0])
+        self.descentEndAlts = ast.literal_eval(aircraftEntry["Descent end altitudes, ft"].values[0])
+        try:
+            self.descentEASs = ast.literal_eval(aircraftEntry["Descent EASs, kts"].values[0])
+        except:
+            try:
+                self.descentEASs = [aircraftEntry["Descent EASs, kts"].values[0]]
+            except:
+                self.descentEASs = []
+        try:
+            self.descentMachs = ast.literal_eval(aircraftEntry["Descent Machs"].values[0])
+        except:
+            try:
+                self.descentMachs = [aircraftEntry["Descent Machs"].values[0]]
+            except:
+                self.descentMachs = []
+
+        if len(self.descentRates) != self.descentStages:
+            raise ValueError(f"Specified {len(self.descentEndAlts)} descent stage climb rates, but the total number of descent stages is {self.descentStages}.")
+        if len(self.descentEndAlts) != self.descentStages:
+            raise ValueError(f"Specified {len(self.descentEndAlts)} descent stage end altitudes, but the total number of descent stages is {self.descentStages}.")
+        if len(self.descentMachs) + len(self.descentEASs) != self.descentStages:
+            raise ValueError(f"Specified {len(self.descentEASs)} constant IAS and {len(self.climbMachs)} constant Mach descent stages, but the total number of descent stages is {self.descentStages}.")
 
     def showVehicleGeom(self):
         SUAVE.Plots.Geometry.plot_vehicle(self.suaveVehicle, plot_control_points=False)
