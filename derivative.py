@@ -55,9 +55,10 @@ class Derivative:
         self.dorsalxStart = dorsalxStart
         self.dorsalxsecNum = dorsalxsecNum
         self.dorsalzOffset = dorsalzOffset
-        self.internalTank = None
+        self.internalTank = internalTank
+        self.tanks = []
 
-        tankStyles = ("DorsalOnly")
+        tankStyles = ("DorsalOnly", "Internal", "Both")
         if self.tankStyle not in tankStyles:
             raise ValueError(f"Tank style '{self.tankStyle}' not implemented, must be one of '{tankStyles}'.")
         
@@ -79,17 +80,33 @@ class Derivative:
             print("Generated!")
             # Add fairing to OpenVSP and create suaveVehicle
             self.addDorsalGeom(dorsalxStart, dorsalxsecNum)
+            self.tanks.append(dorsalTank)
 
-            # Move all fuel inboard: baseline MZFW = derivative MTOW
-            self.suaveVehicle.mass_properties.operating_empty = self.baseline.suaveVehicle.mass_properties.operating_empty + self.dorsalTank.m_empty
-            self.suaveVehicle.mass_properties.max_takeoff = self.baseline.suaveVehicle.mass_properties.max_zero_fuel
-            self.suaveVehicle.mass_properties.max_zero_fuel = self.suaveVehicle.mass_properties.max_takeoff
-            self.suaveVehicle.mass_properties.max_payload = self.suaveVehicle.mass_properties.max_zero_fuel - self.suaveVehicle.mass_properties.operating_empty
-            self.suaveVehicle.mass_properties.max_fuel = self.dorsalTank.usableLH2
+        elif tankStyle == "Internal":
+            if self.internalTank is None:
+                raise ValueError(f"Tank style '{self.tankStyle}' requires a Tank instance for argument 'internalTank'.")
 
-            # Perform combustor LH2 conversion
-            self.suaveVehicle.networks.turbofan.combustor.fuel_data = SUAVE.Attributes.Propellants.Liquid_H2()
-            self.suaveVehicle.networks.turbofan.combustor.fuel_data.specific_energy = 119.9E6 # MJ/kg, override to LCV from SUAVE default (HCV)
+            self.tanks.append(internalTank)
+
+        elif tankStyle == "Both":
+            self.tanks.append(internalTank)
+            self.tanks.append(dorsalTank)
+
+        # Sum contribution of all tanks to dry weight and usable fuel weight
+        self.suaveVehicle.mass_properties.operating_empty = self.baseline.suaveVehicle.mass_properties.operating_empty
+        self.suaveVehicle.mass_properties.max_fuel = 0
+        for tank in self.tanks:
+            self.suaveVehicle.mass_properties.operating_empty += tank.m_empty
+            self.suaveVehicle.mass_properties.max_fuel += tank.usableLH2
+
+        # Derived mass properties under inboard fuel assumption
+        self.suaveVehicle.mass_properties.max_takeoff = self.baseline.suaveVehicle.mass_properties.max_zero_fuel # Baseline MZFW = derivative MTOW with dry wings / inboard fuel
+        self.suaveVehicle.mass_properties.max_zero_fuel = self.suaveVehicle.mass_properties.max_takeoff
+        self.suaveVehicle.mass_properties.max_payload = self.suaveVehicle.mass_properties.max_zero_fuel - self.suaveVehicle.mass_properties.operating_empty
+
+        # Perform combustor LH2 conversion
+        self.suaveVehicle.networks.turbofan.combustor.fuel_data = SUAVE.Attributes.Propellants.Liquid_H2()
+        self.suaveVehicle.networks.turbofan.combustor.fuel_data.specific_energy = 119.9E6 # MJ/kg, override to LCV from SUAVE default (HCV)
 
     def genDorsalFairing(self, tank, Sfront, Dfront, Saft, Daft, show=False):
         """Generate a minimum area fairing profile for a tank and add it to OpenVSP geometry.
@@ -294,7 +311,7 @@ class Derivative:
         z_max = np.max([np.max(xsec["zs"]) for xsec in baselineXsecs])
 
         # Generate dorsal cross locations, use tighter spacing at ends
-        spacingExponent = 3 # Higher exponent increases density at ends of distribution
+        spacingExponent = 1.5 # Higher exponent increases density at ends of distribution
         mid = (self.dorsalxEnd - self.dorsalxStart)/2
         temp = np.linspace(-mid**spacingExponent, mid**spacingExponent, num=self.dorsalxsecNum)
         dorsalXsecPositions = np.sign(temp)*np.abs(temp)**(1/spacingExponent) + mid + self.dorsalxStart
@@ -457,6 +474,103 @@ class Derivative:
             ax.set_aspect("equal")
             plt.show()
 
+    def addInternalTank(self, stretch=True):
+        pass
+
+    def stretchFuselage(self, extraLength, OEWincrease):
+        # VSP reset
+        vsp.ClearVSPModel()
+        vsp.ReadVSPFile(self.baseline.vspPath)
+        vsp.SetVSP3FileName(self.dispName)
+
+        # Vehicle and fuselage container identification
+        vehicle = vsp.FindContainer("Vehicle", 0)
+        wing = vsp.FindGeom("Wing", 0)
+        fuselage = vsp.FindGeom("Fuselage", 0)
+        fuselage_xsecsurf = vsp.GetXSecSurf(fuselage, 0)
+        fuselage_xseccnt = vsp.GetNumXSec(fuselage_xsecsurf)
+
+        sectionResolution = 100
+        baselineXsecs = []
+        # Read sections to find "largest" section      
+        for i in range(fuselage_xseccnt):
+            XSecID = vsp.GetXSec(fuselage_xsecsurf, i)
+            xsec = {"index": i,
+                    "ID": XSecID,
+                    "width": vsp.GetXSecWidth(XSecID),
+                    "height": vsp.GetXSecHeight(XSecID),
+                    "xbar": 0}
+
+            xs = []
+            if i == 0 or i == fuselage_xseccnt-1: # Points at fuselage ends
+                vec = vsp.ComputeXSecPnt(XSecID, 0)
+                xs.append(vec.x())
+            else: # Else read entire curve
+                Us = np.linspace(0, 1, sectionResolution, endpoint=False)
+                for U in Us:
+                    vec = vsp.ComputeXSecPnt(XSecID, U)
+                    xs.append(vec.x())
+
+            xsec["xbar"] = np.mean(xs)
+            if np.max(xs) - np.min(xs) > 0.001*xsec["xbar"]:
+                raise ValueError(f"Reference vehicle cross section {i} not orthogonal to x axis")
+
+            baselineXsecs.append(xsec)
+        
+        # Fuselage lengths
+        baselineLength = np.max([xsec["xbar"] for xsec in baselineXsecs]) - np.min([xsec["xbar"] for xsec in baselineXsecs])
+        derivativeLength = baselineLength + extraLength
+        # Update fuselage length
+        LengthID = vsp.GetParm(fuselage, "Length", "Design")
+        vsp.SetParmVal(LengthID, derivativeLength)
+
+        # Largest sections assumed to be section with largest min(width, height) 
+        smallestDims = [np.min((xsec["width"], xsec["height"])) for xsec in baselineXsecs]
+        largestxsecs = (baselineXsecs[np.argsort(smallestDims)[-1]], baselineXsecs[np.argsort(smallestDims)[-2]])
+
+        maxDia = smallestDims[largestxsecs[0]["index"]] # Larger of the two biggest xsecs
+        xCentre = (largestxsecs[0]["xbar"]+largestxsecs[1]["xbar"])/2
+
+        # Move all xsecs aft of xCentre forward by extraLength
+        derivativeXsecs = deepcopy(baselineXsecs)
+        for xsec in derivativeXsecs:
+            if xsec["xbar"] < xCentre:
+                multiplier = 0
+            else:
+                multiplier = 1
+            xsec["xbar"] += multiplier*extraLength
+
+            # Update xsec position
+            xOffId = vsp.GetXSecParm(vsp.GetXSec(fuselage_xsecsurf, xsec["index"]), "XLocPercent")
+            xPct = xsec["xbar"]/derivativeLength
+            vsp.SetParmValLimits(xOffId, xPct, 0, 1)
+
+        # To do:
+        # Shift entire fuselage forward to maintain relative position of other components (tail)
+        FuseXPosID = vsp.GetParm(fuselage, "X_Location", "XForm")
+        oldXPos = vsp.GetParmVal(FuseXPosID)
+        vsp.SetParmVal(FuseXPosID, oldXPos-extraLength)
+        # Shift main wing forward by half of extraLength ()
+        WingXPosID = vsp.GetParm(wing, "X_Location", "XForm")
+        oldXPos = vsp.GetParmVal(WingXPosID)
+        vsp.SetParmVal(WingXPosID, oldXPos-extraLength/2)
+
+        # Save geometry
+        fname = self.dispName+".vsp3"
+        vsp.SetVSP3FileName(fname)
+        vsp.Update()
+        vsp.WriteVSPFile(vsp.GetVSPFileName(), 0)
+        os.replace(fname, self.path+"/"+fname)
+        self.vspfname = fname
+        print("Derivative geometry written to OpenVSP.")
+
+        # Update vehicle
+        vsp.ClearVSPModel()
+        self.suaveVehicle.fuselages = vsp_read(tag=self.path+"/"+fname,
+                                               units_type="SI",
+                                               specified_network=None,
+                                               use_scaling=True).fuselages
+
 class Tank:
     def __init__(self,
                  usableLH2,
@@ -474,7 +588,8 @@ class Tank:
                  wallSafetyFactor=None,
                  lambda_ins=None,
                  rho_ins=None,
-                 show=False):
+                 show=False,
+                 verbose=True):
 
         self.usableLH2 = usableLH2
         self.aspectRatio = aspectRatio
@@ -492,6 +607,7 @@ class Tank:
         self.rho_ins = rho_ins
         self.lambda_ins = lambda_ins
         self.show = show
+        self.verbose = verbose
 
         fidelityLevels = ("Overall", "Component")
         endTypes = ("2:1elliptical")
@@ -518,11 +634,13 @@ class Tank:
                 self.rho_v = rhovH2(self.T_sat)
 
                 self.tankCapacity = self.usableLH2/((1 - self.ullageFraction)*(self.rho_l - self.rho_v))
-                print(f"Usable LH2 {self.usableLH2:.1f} kg requires tank volume {self.tankCapacity:.1f} m^3 (effective density {self.usableLH2/self.tankCapacity:.1f} kg/m^3)")
+                if verbose:
+                    print(f"Usable LH2 {self.usableLH2:.1f} kg requires tank volume {self.tankCapacity:.1f} m^3 (effective density {self.usableLH2/self.tankCapacity:.1f} kg/m^3)")
 
                 self.m_struct = self.usableLH2*(1/self.etaGrav - 1)
                 self.m_empty = self.m_struct + self.tankCapacity*self.rho_v
-                print(f"Vessel structural weight {self.m_struct:.1f} kg, empty weight {self.m_empty:.1f} kg including vapour")
+                if verbose:
+                    print(f"Vessel structural weight {self.m_struct:.1f} kg, empty weight {self.m_empty:.1f} kg including vapour")
 
                 # Total wall thickness
                 self.t_tot = self.t_ins + self.t_wall
@@ -544,7 +662,8 @@ class Tank:
                 self.Lo = self.Li + 2*self.t_tot
                 self.endLength = self.Di/4 + self.t_tot
 
-                print(f"Vessel geometry converged with external diameter {self.Do:.2f} m, length {self.Lo:.2f} m")
+                if verbose:
+                    print(f"Vessel geometry converged with external diameter {self.Do:.2f} m, length {self.Lo:.2f} m")
 
                 # Generate tank profile
                 CR = self.Di*0.9045
