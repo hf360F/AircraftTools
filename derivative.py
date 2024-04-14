@@ -82,14 +82,30 @@ class Derivative:
             self.addDorsalGeom(dorsalxStart, dorsalxsecNum)
             self.tanks.append(dorsalTank)
 
-        elif tankStyle == "Internal":
+        elif tankStyle in ("Internal", "Both"):
             if self.internalTank is None:
                 raise ValueError(f"Tank style '{self.tankStyle}' requires a Tank instance for argument 'internalTank'.")
 
             self.tanks.append(internalTank)
 
-        elif tankStyle == "Both":
-            self.tanks.append(internalTank)
+        if tankStyle == "Both":
+            if self.dorsalTank is None:
+                raise ValueError(f"Tank style '{self.tankStyle}' requires a Tank instance for argument 'dorsalTank'.")
+            if self.dorsalxStart is None:
+                raise ValueError(f"Tank style '{self.tankStyle}' requires a dorsal tank start position.")
+            
+            # Generate fairing profile
+            print("Generating fairing...")
+            self.dorsalFairingxs, self.dorsalFairingys = self.genDorsalFairing(self.dorsalTank, Sfront, Dfront, Saft, Daft)
+            self.dorsalxEnd = self.dorsalxStart + np.max(self.dorsalFairingxs)
+
+            # Fairing interpolation function
+            fairingInterp = lambda x: np.interp(x, self.dorsalFairingxs, self.dorsalFairingys)
+            self.fairingProfile = lambda x: fairingInterp(x) if x >= 0 and x <= np.max(self.dorsalFairingxs)  else 0
+
+            print("Generated!")
+            # Add fairing to OpenVSP and create suaveVehicle
+            self.addDorsalGeom(dorsalxStart, dorsalxsecNum)
             self.tanks.append(dorsalTank)
 
         # Sum contribution of all tanks to dry weight and usable fuel weight
@@ -254,7 +270,10 @@ class Derivative:
 
         # VSP reset
         vsp.ClearVSPModel()
-        vsp.ReadVSPFile(self.baseline.vspPath)
+        if self.tankStyle == "Both":
+            vsp.ReadVSPFile(self.path+"/"+self.dispName+".vsp3") # Internal tank may use fuselage stretch
+        else:
+            vsp.ReadVSPFile(self.baseline.vspPath)
         vsp.SetVSP3FileName(self.dispName)
 
         # Vehicle and fuselage container identification
@@ -478,6 +497,9 @@ class Derivative:
         pass
 
     def stretchFuselage(self, extraLength, OEWincrease):
+        # Apply OEW increase
+        self.suaveVehicle.mass_properties.operating_empty += OEWincrease
+
         # VSP reset
         vsp.ClearVSPModel()
         vsp.ReadVSPFile(self.baseline.vspPath)
@@ -545,7 +567,6 @@ class Derivative:
             xPct = xsec["xbar"]/derivativeLength
             vsp.SetParmValLimits(xOffId, xPct, 0, 1)
 
-        # To do:
         # Shift entire fuselage forward to maintain relative position of other components (tail)
         FuseXPosID = vsp.GetParm(fuselage, "X_Location", "XForm")
         oldXPos = vsp.GetParmVal(FuseXPosID)
