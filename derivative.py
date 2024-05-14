@@ -601,6 +601,7 @@ class Tank:
                  endGeometry,
                  fidelity="Manual",
                  etaGrav=None,
+                 mdot_boiloff=None,
                  t_ins=None,
                  t_wall=None,
                  sigma_ywall=None,
@@ -619,6 +620,7 @@ class Tank:
         self.endGeometry = endGeometry
         self.fidelity = fidelity
         self.etaGrav = etaGrav
+        self.mdot_boiloff = mdot_boiloff
         self.t_ins = t_ins
         self.t_wall = t_wall
         self.sigma_ywall = sigma_ywall
@@ -630,7 +632,7 @@ class Tank:
         self.show = show
         self.verbose = verbose
 
-        fidelityLevels = ("Overall", "Component")
+        fidelityLevels = ("Overall", "Component", "AutoInsulation")
         endTypes = ("2:1elliptical")
 
         if self.fidelity not in fidelityLevels:
@@ -638,11 +640,28 @@ class Tank:
         if self.endGeometry not in endTypes:
             raise ValueError(f"End type '{self.endGeometry}' is not implemented, must be one of '{endTypes}'.")
 
-        if self.fidelity == "Overall":
-            reqdArgs = {"etaGrav": self.etaGrav, "t_ins": self.t_ins, "t_wall": self.t_wall}
+        if self.fidelity == "Overall" or "AutoInsulation":
+            if self.fidelity == "Overall":
+                reqdArgs = {"etaGrav": self.etaGrav, "t_ins": self.t_ins, "t_wall": self.t_wall}
+            elif self.fidelity == "AutoInsulation":
+                reqdArgs = {"etaGrav": self.etaGrav, "t_wall": self.t_wall, "mdot_boiloff": self.mdot_boiloff}
+
             for key in reqdArgs:
                 if reqdArgs[key] == None:
                     raise ValueError(f"Fidelity level '{self.fidelity}' missing required argument '{key}'")
+
+        self.T_sat = TsatH2(self.ventPressure)
+
+        if self.fidelity == "AutoInsulation":
+            deltahvap = hvlH2(self.T_sat)
+            Qmax = self.deltahvap*self.mdot_boiloff
+            self.t_ins = 0 # Initial guess
+
+            deltaTwall = (273.15+30 - self.T_sat) # K
+
+            # Using EPS foam
+            lambda_ins = 0.026 # W/mK
+            rho_ins = 50 # kg/m^3
 
         if self.fidelity == "Overall":
             if self.endGeometry == "2:1elliptical":
@@ -675,6 +694,17 @@ class Tank:
                 soln = scipy.optimize.minimize_scalar(ARresidual)
                 self.Di = soln.x
                 self.Li = newLi(self.Di)
+
+                self.Awet = 0
+
+                if fidelity == "AutoInsulation":
+                    t_insold = self.t_ins
+
+                    self.Awet = 0
+                    self.t_ins = deltaTwall*self.Awet*lambda_ins/Qmax
+                    while np.abs((self.t_ins-t_insold)/t_insold) > 1E-2:
+                        pass
+                        # loop 
 
                 if self.Li < self.Di/2:
                     raise ValueError(f"Negative cylinder length ({self.Li-self.Di/2:.2f} m): aspect ratio is unreachable.")
