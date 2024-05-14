@@ -5,6 +5,10 @@ from scipy import optimize
 import SUAVE
 from SUAVE.Core import Data, Units
 import baseline as base
+import tqdm
+
+rangeExponent = 1.06 # Fixed fuel case
+rangeExponent2 = 0.91 # Fixed range case
 
 def aeroSweep(vehicle, alphas, machs, altitude, deltaT=0):
     """Perform a Mach/alpha sweep on a vehicle.
@@ -89,6 +93,7 @@ def aeroSweep(vehicle, alphas, machs, altitude, deltaT=0):
 
     results["machs"] = machs
     results["alphas"] = alphas
+    results["altitude"] = altitude
 
     return results
 
@@ -251,7 +256,7 @@ def flightMission(Aircraft, cruiseRange, fuel, payload, climbType, cruiseAlt):
 
     Args:
         Aircraft (Container): Baseline or Derivative containing SUAVE.Vehicle.Vehicle object.
-        range (float): Total flight range, m.
+        cruiseRange (float): Flight cruise segment range, m.
         fuel (float): Aircraft fuel load, kg.
         payload (float): Aircraft payload, kg.
         climbType (string): Type of aircraft climb. Must be one of 'cruiseOnly'.
@@ -277,10 +282,12 @@ def flightMission(Aircraft, cruiseRange, fuel, payload, climbType, cruiseAlt):
               f"maximum {vehicle.mass_properties.max_takeoff:.0f} kg for {vehicle.tag}. Dumping fuel to clamp to max.")
         fuel -= (payload+fuel+vehicle.mass_properties.operating_empty) - vehicle.mass_properties.max_takeoff 
 
+    vehicle.mass_properties.fuel = fuel
     vehicle.mass_properties.payload = payload
+    vehicle.mass_properties.takeoff = vehicle.mass_properties.operating_empty + fuel + payload
 
-    fuelRelTol = 1E-5
-    exponent = 1.05
+    fuelRelTol = 1E-4
+    exponent = rangeExponent
     fuelRatio = 10
     maxIters = 10
 
@@ -339,7 +346,7 @@ def flightMission(Aircraft, cruiseRange, fuel, payload, climbType, cruiseAlt):
         climbTypes = ("CruiseOnly", "AircraftDefined", "ClimbDescentOnly")
         if climbType not in climbTypes:
             raise ValueError(f"Cruise type '{climbType}' unsupported. Must be one of {climbTypes}")
-        elif climbType is "CruiseOnly":
+        else:
             baseConfig = SUAVE.Components.Configs.Config(vehicle)
             baseConfig.tag = "base"
             configs.append(baseConfig)
@@ -350,15 +357,111 @@ def flightMission(Aircraft, cruiseRange, fuel, payload, climbType, cruiseAlt):
 
             configs_analyses = analyses_setup(configs)
 
-            # Define mission
-            segment = Segments.Cruise.Constant_Speed_Constant_Altitude(baseSegment)
+        # Define mission
+        if climbType is "CruiseOnly":
+            segment = Segments.Cruise.Constant_Mach_Constant_Altitude(baseSegment)
             segment.tag = "cruise"
             segment.analyses.extend(configs_analyses.cruise)
-            cruiseConds = configs_analyses.base.atmosphere.compute_values(cruiseAlt)
-            segment.air_speed = Aircraft.cruise_mach * cruiseConds.speed_of_sound
+            segment.mach = Aircraft.cruise_mach
             segment.altitude = cruiseAlt
-            segment.distance = range
+            segment.distance = cruiseRange
             mission.append_segment(segment)
+
+        elif climbType is "AircraftDefined":
+            for i in np.arange(Aircraft.climbStages):
+                if i <= len(Aircraft.climbEASs)-1:
+                    segment = Segments.Climb.Constant_EAS_Constant_Rate(baseSegment)
+                    segment.tag = f"climb_{i-1}"
+                    segment.analyses.extend(configs_analyses.cruise)
+                    segment.altitude_end = Aircraft.climbEndAlts[i] * Units.ft
+                    segment.climb_rate = Aircraft.climbRates[i] * Units.ft/60
+                    segment.equivalent_air_speed = Aircraft.climbEASs[i] * Units.kts
+                else:
+                    segment = Segments.Climb.Constant_Mach_Constant_Rate(baseSegment)
+                    segment.tag = f"climb_{i-1}"
+                    segment.analyses.extend(configs_analyses.cruise)
+                    segment.altitude_end = Aircraft.climbEndAlts[i] * Units.ft
+                    segment.climb_rate = Aircraft.climbRates[i] * Units.ft/60
+                    segment.mach_number = Aircraft.climbMachs[i-len(Aircraft.climbEASs)]
+                
+                if i == 0:
+                    segment.altitude_start = 0
+                mission.append_segment(segment)
+
+            segment = Segments.Cruise.Constant_Mach_Constant_Altitude(baseSegment)
+            segment.tag = "cruise"
+            segment.analyses.extend(configs_analyses.cruise)
+            segment.mach = Aircraft.cruise_mach
+            segment.altitude = mission.segments[-1].altitude_end
+            segment.distance = cruiseRange
+            mission.append_segment(segment)
+
+            for i in np.arange(Aircraft.descentStages):
+                if i <= len(Aircraft.descentMachs)-1:
+                    segment = Segments.Descent.Linear_Mach_Constant_Rate(baseSegment)
+                    segment.tag = f"descent_{i-1}"
+                    segment.analyses.extend(configs_analyses.cruise)
+                    segment.altitude_end = Aircraft.descentEndAlts[i] * Units.ft
+                    segment.descent_rate = Aircraft.descentRates[i] * Units.ft/60
+                    segment.mach_start = Aircraft.descentMachs[i]
+                    segment.mach_end = segment.mach_start
+                else:
+                    segment = Segments.Descent.Constant_EAS_Constant_Rate(baseSegment)
+                    segment.tag = f"descent_{i-1}"
+                    segment.analyses.extend(configs_analyses.cruise)
+                    segment.altitude_end = Aircraft.descentEndAlts[i] * Units.ft
+                    segment.descent_rate = Aircraft.descentRates[i] * Units.ft/60
+                    segment.equivalent_air_speed = Aircraft.descentEASs[i-len(Aircraft.descentMachs)] * Units.kts
+  
+                mission.append_segment(segment)
+        
+        elif climbType is "ClimbDescentOnly":
+            # Find number of climb stages and climb end altitude
+            climbEASs, climbMachs, climbIndex, climbRates, climbEndAltitudes, descentMachs, descentEASs, descentRates, descentEndAltitudes = climbDescentStages(Aircraft, cruiseAlt)
+
+            for i in np.arange(len(climbEndAltitudes)):
+                if i == len(climbEndAltitudes)-1:
+                    endAltitude = cruiseAlt * 3.281 * Units.ft
+                else:
+                    endAltitude = climbEndAltitudes[i] * Units.ft
+                if i <= len(climbEASs)-1:
+                    segment = Segments.Climb.Constant_EAS_Constant_Rate(baseSegment)
+                    segment.tag = f"climb_{i+1}"
+                    segment.analyses.extend(configs_analyses.cruise)
+                    segment.altitude_end = endAltitude
+                    segment.climb_rate = climbRates[i] * Units.ft/60
+                    segment.equivalent_air_speed = climbEASs[i] * Units.kts
+                else:
+                    segment = Segments.Climb.Constant_Mach_Constant_Rate(baseSegment)
+                    segment.tag = f"climb_{i+1}"
+                    segment.analyses.extend(configs_analyses.cruise)
+                    segment.altitude_end = endAltitude
+                    segment.climb_rate = climbRates[i] * Units.ft/60
+                    segment.mach_number = climbMachs[i-len(climbEASs)]
+                
+                if i == 0:
+                    segment.altitude_start = 0
+
+                mission.append_segment(segment)
+
+            for i in np.arange(len(descentEndAltitudes)):
+                if i <= len(descentMachs)-1:
+                    segment = Segments.Descent.Linear_Mach_Constant_Rate(baseSegment)
+                    segment.tag = f"descent_{i+1}"
+                    segment.analyses.extend(configs_analyses.cruise)
+                    segment.altitude_end = descentEndAltitudes[i] * Units.ft
+                    segment.descent_rate = descentRates[i] * Units.ft/60
+                    segment.mach_start = descentMachs[i]
+                    segment.mach_end = segment.mach_start
+                else:
+                    segment = Segments.Descent.Constant_EAS_Constant_Rate(baseSegment)
+                    segment.tag = f"descent_{i+1}"
+                    segment.analyses.extend(configs_analyses.cruise)
+                    segment.altitude_end = descentEndAltitudes[i] * Units.ft
+                    segment.descent_rate = descentRates[i] * Units.ft/60
+                    segment.equivalent_air_speed = descentEASs[i-len(descentMachs)] * Units.kts
+  
+                mission.append_segment(segment)
 
         # Finalise
         missions_analyses = SUAVE.Analyses.Mission.Mission.Container()
@@ -390,18 +493,18 @@ def flightMission(Aircraft, cruiseRange, fuel, payload, climbType, cruiseAlt):
 
         return results
 
-
     results = fly()
 
     return results
 
-def fixedRangeMission(Aircraft, range, payload, climbType, cruiseAlt):
+def fixedRangeMission(Aircraft, range, payload, ICAOreserves, climbType, cruiseAlt):
     """Fly an aircraft a fixed range with a given payload, iterate to find required fuel load.
 
     Args:
         Aircraft (Container): Baseline or Derivative containing SUAVE.Vehicle.Vehicle object.
         range (float): Target toal range, m.
         payload (float): Aircraft payload, kg.
+        ICAOreserves (bool): Whether or not to calculate and include ICAO standard reserves in fuel load.
         climbType (string): Passed to flightFunctions.flightMission().
         cruiseAlt (float): Passed to flightFunctions.flightMission().
 
@@ -419,10 +522,40 @@ def fixedRangeMission(Aircraft, range, payload, climbType, cruiseAlt):
                       vehicle.mass_properties.max_takeoff - (vehicle.mass_properties.operating_empty + payload)))
     
     i = 0
-    fuelRelTol = 1E-5
+    fuelRelTol = 1E-4
+    rangeResRelTol = 1E-4
     fuelRatio = 0
-    exponent = 1.05
-    maxIters = 10
+    exponent = rangeExponent2
+    maxIters = 20
+
+    tqdm.tqdm.write(f"Aircraft {Aircraft.dispName}, payload {payload/1000:.2f} tonnes, range of {range/1000:.1f} km.")
+
+    # Check climb profile is ok
+    results = flightMission(Aircraft, range, 0, payload, "ClimbDescentOnly", cruiseAlt)
+    climbDescRange = results.segments[-1].conditions.frames.inertial.aircraft_range[-1,0]
+
+    if climbDescRange > range:
+        tqdm.tqdm.write("Full climb profile does not reach target cruise altitude within specified range. Setting new altitude automatically.")
+
+        def climbRangeResidual(climbAltitude):
+            results = flightMission(Aircraft, range, 0, payload, "ClimbDescentOnly", climbAltitude)
+            climbDescRange = results.segments[-1].conditions.frames.inertial.aircraft_range[-1,0]
+
+            return np.abs(1 - climbDescRange/range)
+
+        sol = optimize.minimize_scalar(climbRangeResidual,
+                                       method = "bounded" ,
+                                       bounds = (0, cruiseAlt),
+                                       options = {"maxiter": maxIters,
+                                                  "xatol": 1})
+        cruiseAlt = sol.x
+        if sol.fun > rangeResRelTol:
+            raise ValueError(f"Variable climb altitude solver did not converge in {sol.nit} iterations: residual {sol.fun}, tolerance {rangeResRelTol}")
+        
+        tqdm.tqdm.write(f"New climb altitude is {cruiseAlt:.1f} m")
+        results = flightMission(Aircraft, range, 0, payload, "ClimbDescentOnly", cruiseAlt)
+        climbDescRange = results.segments[-1].conditions.frames.inertial.aircraft_range[-1,0]
+        climbType = "ClimbDescentOnly"
 
     while fuelRatio > 1+fuelRelTol or fuelRatio < 1-fuelRelTol:
         if i == 0:
@@ -434,35 +567,46 @@ def fixedRangeMission(Aircraft, range, payload, climbType, cruiseAlt):
         vehicle.mass_properties.takeoff = vehicle.mass_properties.operating_empty + fuelLoad + payload
 
         if vehicle.mass_properties.fuel > vehicle.mass_properties.max_fuel:
-            raise ValueError(f"Next fuel load {vehicle.mass_properties.fuel:.1f} kg exceeds max {vehicle.mass_properties.max_fuel:.1f} kg. Range may be unreachable.")
+            tqdm.tqdm.write(f"Next fuel load {vehicle.mass_properties.fuel:.1f} kg exceeds max {vehicle.mass_properties.max_fuel:.1f} kg. Range may be unreachable, clamping to max.")
+            vehicle.mass_properties.fuel = vehicle.mass_properties.max_fuel
         if vehicle.mass_properties.takeoff > vehicle.mass_properties.max_takeoff:
-            raise ValueError(f"Next takeoff weight {vehicle.mass_properties.takeoff:.1f} kg exceeds max {vehicle.mass_properties.max_takeoff:.1f} kg. Range may be unreachable.")
+            tqdm.tqdm.write(f"Next takeoff weight {vehicle.mass_properties.takeoff:.1f} kg exceeds max {vehicle.mass_properties.max_takeoff:.1f} kg. Range may be unreachable, clamping to max by dumping fuel.")
+            fuelLoad = vehicle.mass_properties.max_takeoff - vehicle.mass_properties.operating_empty - payload
+            vehicle.mass_properties.fuel = fuelLoad
+            vehicle.mass_properties.takeoff = vehicle.mass_properties.operating_empty + fuelLoad + payload
 
-        results = flightMission(Aircraft, range, fuel, payload, climbType, cruiseAlt)
+        results = flightMission(Aircraft, np.max(range-climbDescRange, 0), fuel, payload, climbType, cruiseAlt)
 
         initialMass = results.segments[0].conditions.weights.total_mass[0,0]
         finalMass = results.segments[-1].conditions.weights.total_mass[-1,0]
 
         fuelBurn = initialMass - finalMass
-        fuelRatio = fuelBurn/fuelLoad
+
+        if ICAOreserves is True:
+            reserve = ICAOreserve(Aircraft, payload, fuelLoad)
+        else:
+            reserve = 0
+
+        fuelRatio = (fuelBurn + reserve)/fuelLoad
 
         fuelLoadOld = fuelLoad
         fuelLoad = fuelLoad * (fuelRatio**exponent)
 
-        print(f"FLIGHT ITERATION: {i}")
-        print(f"LOADED {fuelLoadOld:.1f} kg, BURNED {fuelBurn:.1f} kg, RATIO = {fuelRatio:.4f}, NEXT LOAD {fuelLoad:.1f} kg")
+        tqdm.tqdm.write(f"FLIGHT ITERATION: {i}")
+        tqdm.tqdm.write(f"LOADED {fuelLoadOld:.1f} kg, BURNED {fuelBurn:.1f} kg, RESERVE {reserve:.1f} kg, RATIO = {fuelRatio:.4f}, NEXT LOAD {fuelLoad:.1f} kg")
         i += 1
 
-    print(f"CONVERGED WITH FUEL LOAD {fuelLoad:.1f} kg")
+    tqdm.tqdm.write(f"Flight converged with fuel load {fuelLoad/1000:.2f} tonnes, reserve {reserve:.1f} kg in {i} iterations.\n")
 
     return results
 
-def fixedFuelMission(Aircraft, fuel, payload, climbType, cruiseAlt):
+def fixedFuelMission(Aircraft, fuel, fuelReserve, payload, climbType, cruiseAlt):
     """Fly an aircraft to range exhausting all given fuel with constant payload by iterating cruise range.
 
     Args:
         Aircraft (Container): Baseline or Derivative containing SUAVE.Vehicle.Vehicle object.
         fuel (float): Aircraft fuel load, kg.
+        fuelReserve (float): Aircraft fuel reserve, kg.
         payload (float): Aircraft payload, kg.
         climbType (string): Passed to flightFunctions.flightMission().
         cruiseAlt (float): Passed to flightFunctions.flightMission().
@@ -470,41 +614,82 @@ def fixedFuelMission(Aircraft, fuel, payload, climbType, cruiseAlt):
     Raises:
         ValueError: Iteration count exceeded.
     """
+    i = 0
+    fuelUseRelTol = 1E-4
+    fuelUseFraction = 0
+    exponent = rangeExponent
+    maxIters = 50
+
+    tqdm.tqdm.write(f"Aircraft {Aircraft.dispName} with fuel {fuel/1000:.2f} tonnes ({fuelReserve/1000:.2f} tonnes reserve), payload {payload/1000:.2f} tonnes.")
+
+    if fuelReserve > fuel or fuelReserve < 0:
+        raise ValueError(f"Fuel reserve ({fuelReserve:.1f} kg) must be positive and less than total fuel {fuel:.1f} kg.")
 
     vehicle = Aircraft.suaveVehicle
     vehicle.mass_properties.fuel = fuel
     vehicle.mass_properties.takeoff = vehicle.mass_properties.operating_empty + fuel + payload
 
-   # Crude initial guess - likely to be +- 1 OOM
+    # Try to climb to and descend from target cruise altitude with given fuel
+    
+    results = flightMission(Aircraft, 0, fuel, payload, "ClimbDescentOnly", cruiseAlt)
+    initialMass = results.segments[0].conditions.weights.total_mass[0,0]
+    finalMass = results.segments[-1].conditions.weights.total_mass[-1,0]
+    if initialMass - finalMass > (fuel - fuelReserve):
+        print("Unable to reach target altitude with given fuel. Setting new altitude automatically.")
+
+        def climbFuelResidual(climbAltitude):
+            results = flightMission(Aircraft, 0, fuel, payload, "ClimbDescentOnly", climbAltitude)
+            initialMass = results.segments[0].conditions.weights.total_mass[0,0]
+            finalMass = results.segments[-1].conditions.weights.total_mass[-1,0]
+            return np.abs(1 - (initialMass-finalMass)/(fuel - fuelReserve))
+
+        sol = optimize.minimize_scalar(climbFuelResidual,
+                                       method = "bounded" ,
+                                       bounds = (0, cruiseAlt),
+                                       options = {"maxiter": maxIters,
+                                                  "xatol": 1})
+        cruiseAlt = sol.x
+        if sol.fun > fuelUseRelTol:
+            raise ValueError(f"Variable climb altitude solver did not converge in {sol.nit} iterations: residual {sol.fun}, tolerance {fuelUseRelTol}")
+        results = flightMission(Aircraft, 0, fuel, payload, "ClimbDescentOnly", cruiseAlt)
+
+        range = results.segments[-1].conditions.frames.inertial.aircraft_range[-1,0]
+        tqdm.tqdm.write(f"Flight converged with range {range/1000:.1f} km in {sol.nit} iterations, climbed to {cruiseAlt:.1f} m.\n")
+
+        return results
+
+   # Crude initial guess but likely within 1 order of magnitude
     range = 2000 * Units.km
     
-    i = 0
-    fuelUseRelTol = 1E-5
-    fuelUseFraction = 0
-    exponent = 1.05
-    maxIters = 10
-
     while fuelUseFraction > 1+fuelUseRelTol or fuelUseFraction < 1-fuelUseRelTol:
         if i == 0:
-            newRange = range
+            nextCruiseRange = range
         elif i == maxIters:
             raise ValueError(f"ITERATION COUNT EXCEEDS MAX ({maxIters})")
 
-        results = flightMission(Aircraft, newRange, fuel, payload, climbType, cruiseAlt)
+        results = flightMission(Aircraft, nextCruiseRange, fuel, payload, climbType, cruiseAlt)
 
         initialMass = results.segments[0].conditions.weights.total_mass[0,0]
         finalMass = results.segments[-1].conditions.weights.total_mass[-1,0]
 
         fuelBurn = initialMass - finalMass
-        fuelUseFraction = fuelBurn/fuel
+        fuelUseFraction = fuelBurn/(fuel - fuelReserve)
+                
+        cruiseFuelBurn = results.segments.cruise.conditions.weights.total_mass[0,0]-results.segments.cruise.conditions.weights.total_mass[-1,0]
+        climbDescentFuelBurn = fuelBurn - cruiseFuelBurn
+        availableCruiseFuel = fuel - fuelReserve - climbDescentFuelBurn
 
-        oldRange = results.segments[-1].distance
-        newRange = oldRange * ((1/fuelUseFraction) ** exponent)
+        cruiseUsageFraction = cruiseFuelBurn/availableCruiseFuel
+        #print(fuelUseFraction, cruiseUsageFraction)
+        oldCruiseRange = results.segments.cruise.distance
+        oldRange = results.segments[-1].conditions.frames.inertial.aircraft_range[-1,0]
 
-        print(f"FLIGHT ITERATION: {i}")
-        print(f"FLEW {oldRange/1000:.1f} km, BURNED {fuelBurn:.1f} kg, FUEL BURN FRACTION = {fuelUseFraction:.4f}, NEXT RANGE {newRange/1000:.1f} km")
+        nextCruiseRange = oldCruiseRange * ((1/cruiseUsageFraction) ** exponent)
+
+        #print(f"FLIGHT ITERATION: {i}")
+        #print(f"FLEW TOTAL {oldRange/1000:.1f} km, CRUISE BURN {cruiseFuelBurn:.1f} kg, FUEL USE FRACTION = {fuelUseFraction:.4f}, NEXT CRUISE RANGE {nextCruiseRange/1000:.1f} km")
         i += 1
 
-    print(f"CONVERGED WITH RANGE {newRange/1000:.1f} km")
+    tqdm.tqdm.write(f"Flight converged with range {oldRange/1000:.1f} km in {i} iterations.\n")
 
     return results
