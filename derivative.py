@@ -749,6 +749,7 @@ kls = (0.097633, 0.098442, 0.099195, 0.099893, 0.10053, 0.10112, 0.10165, 0.1021
 
 # Interpolators
 psatH2_interp = scipy.interpolate.interp1d(Ts, psats, kind="cubic")
+TsatH2_interp = scipy.interpolate.interp1d(psats, Ts, kind="cubic")
 
 rhols_interp = scipy.interpolate.interp1d(Ts, rhols, kind="cubic")
 rhovs_interp = scipy.interpolate.interp1d(Ts, rhovs, kind="cubic")
@@ -769,6 +770,9 @@ muls_interp = scipy.interpolate.interp1d(Ts, muls, kind="cubic")
 # Interpolation functions
 def psatH2(T):
     return psatH2_interp(T)
+
+def TsatH2(p):
+    return TsatH2_interp(p)
 
 def rholH2(T):
     return rhols_interp(T)
