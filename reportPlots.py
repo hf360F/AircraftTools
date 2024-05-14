@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import ConnectionPatch
 from tqdm import tqdm
 
+import pickle
 import baseline as base
 import derivative as dv
 from flightFunctions import *
@@ -164,41 +165,126 @@ if False:
 
 ## A320 FEPR contours
 if True:
-    Aircraft = A320
-    vehicle = Aircraft.suaveVehicle
+    generateNew = True
+    fname = "FEPRdata.pickle"
 
-    rangeCounts = 7
-    payloadCounts = 5
-    points = rangeCounts*payloadCounts
+    if generateNew:
+        # Check if we want to save
+        answer = input(f"Pickle data: Y or N? (will overwrite existing {fname})")
+        if answer == "Y" or answer == "y":
+            saveFlag = True
+        elif answer == "N" or answer == "n": 
+            saveFlag = False
+        else: tqdm.tqdm.write("Please enter Y or N.")
 
-    pbar1 = tqdm.tqdm(total=points, position=1, desc=f"Contour points", ncols=80)
+        Aircraft = A320
+        vehicle = Aircraft.suaveVehicle
 
-    frontierPayloads = [vehicle.mass_properties.max_payload, vehicle.mass_properties.max_payload, 0, 0]
-    frontierFuels = [0, 0, vehicle.mass_properties.max_fuel, vehicle.mass_properties.max_fuel]
+        rangeCounts = 10
+        payloadCounts = 6
+        points = rangeCounts*payloadCounts
+
+        pbar1 = tqdm.tqdm(total=points, position=1, desc=f"Contour points", ncols=80)
+
+        frontierPayloads = [vehicle.mass_properties.max_payload, vehicle.mass_properties.max_payload, 0, 0]
+        frontierFuels = [0, 0, vehicle.mass_properties.max_fuel, vehicle.mass_properties.max_fuel]
+            
+        frontierPayloads[2] = vehicle.mass_properties.max_takeoff - (vehicle.mass_properties.operating_empty + frontierFuels[2])
+        frontierFuels[1] = vehicle.mass_properties.max_takeoff - (vehicle.mass_properties.operating_empty + frontierPayloads[1])
+        frontierRanges = np.zeros_like(frontierFuels)
+
+        frontierReserves = np.zeros_like(frontierFuels)
+        frontierReserves[0] = ICAOreserve(Aircraft, frontierPayloads[0], 1E-5)
+
+        # Obtain frontier points 
+        for j in range(1, len(frontierPayloads)):
+            if frontierFuels[j] == 0:
+                frontierRanges[j] = 0
+                frontierReserves[j] = ICAOreserve(Aircraft, frontierPayloads[j], 0)
+            else:
+                frontierReserves[j] = ICAOreserve(Aircraft, frontierPayloads[j], frontierFuels[j])
+
+                results =  fixedFuelMission(Aircraft = Aircraft,
+                                            fuel = frontierFuels[j],
+                                            fuelReserve = frontierReserves[j],
+                                            payload = frontierPayloads[j],
+                                            climbType = "AircraftDefined",
+                                            cruiseAlt = 10667 * Units.m)
+
+                frontierRanges[j] = results.segments[-1].conditions.frames.inertial.aircraft_range[-1,0]
+
+        contRanges = np.multiply(np.linspace(0.5/rangeCounts, 1 - 0.5/rangeCounts, rangeCounts), np.max(frontierRanges))
+        contPayloadRangeFEPR = np.zeros((rangeCounts, payloadCounts, 3))
+
+        for i in np.flip(range(rangeCounts)):
+            flightRange = contRanges[i]
+            
+            for j in np.flip(range(payloadCounts)):
+                if flightRange <= frontierRanges[1]:
+                    maxPayload = frontierPayloads[1]
+                elif flightRange <= frontierRanges[2]:
+                    maxPayload = frontierPayloads[1] - (flightRange - frontierRanges[1])*(frontierPayloads[1] - frontierPayloads[2])/(frontierRanges[2] - frontierRanges[1])
+                elif flightRange <= frontierRanges[3]:
+                    maxPayload = (frontierRanges[3] - flightRange)*frontierPayloads[2]/(frontierRanges[3]-frontierRanges[2])
+                else:
+                    raise ValueError(f"Range {flightRange/1000:.1f} km exceeds ferry range {frontierRanges/1000:.1f} km.")
+
+                contPayloadRangeFEPR[i,j,0] = maxPayload*(j+0.5)/(payloadCounts-0.5)
+                contPayloadRangeFEPR[i,j,1] = flightRange
+
+                if contPayloadRangeFEPR[i,j,0] == 0 or contPayloadRangeFEPR[i,j,1] == 0:
+                    contPayloadRangeFEPR[i,j,2] == np.nan
+                else:
+                    results = fixedRangeMission(Aircraft = Aircraft,
+                                                range = contPayloadRangeFEPR[i,j,1],
+                                                payload = contPayloadRangeFEPR[i,j,0],
+                                                ICAOreserves = True,
+                                                climbType = "AircraftDefined",
+                                                cruiseAlt = 10667 * Units.m)
+
+                    initialMass = results.segments[0].conditions.weights.total_mass[0,0]
+                    finalMass = results.segments[-1].conditions.weights.total_mass[-1,0]
+                    fuelBurn = initialMass - finalMass
+
+                    contPayloadRangeFEPR[i,j,2] = fuelBurn*Aircraft.suaveVehicle.networks.turbofan.combustor.fuel_data.specific_energy/(contPayloadRangeFEPR[i,j,0]*contPayloadRangeFEPR[i,j,1])
+
+                if saveFlag:
+                    data = {"frontierRanges": frontierRanges,
+                    "frontierPayloads": frontierPayloads,
+                    "contPayloadRangeFEPR": contPayloadRangeFEPR}
+
+                    with open(fname, "wb") as f:
+                        pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
+
+                pbar1.update(1)
+
+        # Check if we want to save
+        answer = input(f"Pickle data: Y or N? (will overwrite existing {fname})")
+        if answer == "Y" or answer == "y":
+
+            data = {"frontierRanges": frontierRanges,
+            "frontierPayloads": frontierPayloads,
+            "contPayloadRangeFEPR": contPayloadRangeFEPR}
+
+            with open(fname, "wb") as f:
+                pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
+        elif answer == "N" or answer == "n": 
+            pass
+        else: tqdm.tqdm.write("Please enter Y or N.")        
         
-    frontierPayloads[2] = vehicle.mass_properties.max_takeoff - (vehicle.mass_properties.operating_empty + frontierFuels[2])
-    frontierFuels[1] = vehicle.mass_properties.max_takeoff - (vehicle.mass_properties.operating_empty + frontierPayloads[1])
-    frontierRanges = np.zeros_like(frontierFuels)
+    else:
+        with open(fname, "rb") as f:
+            data = pickle.load(f)
 
-    frontierReserves = np.zeros_like(frontierFuels)
-    frontierReserves[0] = ICAOreserve(Aircraft, frontierPayloads[0], 1E-5)
+        # Unpack    
+        frontierRanges = data["frontierRanges"]
+        frontierPayloads = data["frontierPayloads"]
+        contPayloadRangeFEPR = data["contPayloadRangeFEPR"]
 
-    # Obtain frontier points 
-    for j in range(1, len(frontierPayloads)):
-        if frontierFuels[j] == 0:
-            frontierRanges[j] = 0
-            frontierReserves[j] = ICAOreserve(Aircraft, frontierPayloads[j], 0)
-        else:
-            frontierReserves[j] = ICAOreserve(Aircraft, frontierPayloads[j], frontierFuels[j])
+    minFEPR = np.min(contPayloadRangeFEPR[:,:,2])
+    # Should evaluate min FEPR by checking FEPR at R1 and R2 with respective max payloads
 
-            results =  fixedFuelMission(Aircraft = Aircraft,
-                                        fuel = frontierFuels[j],
-                                        fuelReserve = frontierReserves[j],
-                                        payload = frontierPayloads[j],
-                                        climbType = "AircraftDefined",
-                                        cruiseAlt = 10667 * Units.m)
-
-            frontierRanges[j] = results.segments[-1].conditions.frames.inertial.aircraft_range[-1,0]
+    normalisedFEPR = (contPayloadRangeFEPR[:,:,2]/minFEPR - 1)*100
 
     fig, ax = plt.subplots(1, 1, dpi=ddpi)
     ax.plot(np.divide(frontierRanges, 1000), np.divide(frontierPayloads, 1000), color="blue")
@@ -210,53 +296,11 @@ if True:
 
     ax.grid()
 
-    contRanges = np.multiply(np.linspace(0.5/rangeCounts, 1 - 0.5/rangeCounts, rangeCounts), np.max(frontierRanges))
-    contPayloadRangeFEPR = np.zeros((rangeCounts, payloadCounts, 3))
-
-    print(frontierPayloads, frontierRanges)
-
-    for i in np.flip(range(rangeCounts)):
-        flightRange = contRanges[i]
-        
-        for j in np.flip(range(payloadCounts)):
-            if flightRange <= frontierRanges[1]:
-                maxPayload = frontierPayloads[1]
-            elif flightRange <= frontierRanges[2]:
-                maxPayload = frontierPayloads[1] - (flightRange - frontierRanges[1])*(frontierPayloads[1] - frontierPayloads[2])/(frontierRanges[2] - frontierRanges[1])
-            elif flightRange <= frontierRanges[3]:
-                maxPayload = (frontierRanges[3] - flightRange)*frontierPayloads[3]
-            else:
-                raise ValueError(f"Range {flightRange/1000:.1f} km exceeds ferry range {frontierRanges/1000:.1f} km.")
-
-            contPayloadRangeFEPR[i,j,0] = maxPayload*(j+0.5)/(payloadCounts-0.5)
-            contPayloadRangeFEPR[i,j,1] = flightRange
-
-            if contPayloadRangeFEPR[i,j,0] == 0 or contPayloadRangeFEPR[i,j,1] == 0:
-                contPayloadRangeFEPR[i,j,2] == np.nan
-            else:
-                results = fixedRangeMission(Aircraft = Aircraft,
-                                            range = contPayloadRangeFEPR[i,j,1],
-                                            payload = contPayloadRangeFEPR[i,j,0],
-                                            ICAOreserves = True,
-                                            climbType = "AircraftDefined",
-                                            cruiseAlt = 10667 * Units.m)
-
-                initialMass = results.segments[0].conditions.weights.total_mass[0,0]
-                finalMass = results.segments[-1].conditions.weights.total_mass[-1,0]
-                fuelBurn = initialMass - finalMass
-
-                contPayloadRangeFEPR[i,j,2] = fuelBurn*Aircraft.suaveVehicle.networks.turbofan.combustor.fuel_data.specific_energy/(contPayloadRangeFEPR[i,j,0]*contPayloadRangeFEPR[i,j,1])
-            pbar1.update(1)
-
-    minFEPR = np.min(contPayloadRangeFEPR[:,:,2])
-    # Should evaluate min FEPR by checking FEPR at R1 and R2 with respective max payloads
-
-    normalisedFEPR = contPayloadRangeFEPR[:,:,2]/1#minFEPR
-
-    ax.scatter(np.divide(contPayloadRangeFEPR[:,:,1], 1000), np.divide(contPayloadRangeFEPR[:,:,0], 1000))
+    ax.scatter(np.divide(contPayloadRangeFEPR[:,:,1], 1000), np.divide(contPayloadRangeFEPR[:,:,0], 1000), marker="x", color="black")
     CS = ax.contour(np.divide(contPayloadRangeFEPR[:,:,1], 1000), 
                     np.divide(contPayloadRangeFEPR[:,:,0], 1000),
                     normalisedFEPR,
+                    levels=np.multiply(np.subtract((1.05, 1.10, 1.25, 1.50, 2.00, 3.00, 6.00), 1), 100),
                     colors="black")
     
     def fmt(x):
@@ -265,6 +309,6 @@ if True:
             s = f"{x:.0f}"
         return rf"+{s}\%" if plt.rcParams["text.usetex"] else f"+{s}%"
 
-    #ax.clabel(CS, CS.levels, inline=True, fmt=fmt, manual=True)
+    ax.clabel(CS, CS.levels, inline=True, fmt=fmt, manual=True)
 
     plt.show()
