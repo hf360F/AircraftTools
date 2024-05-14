@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy import optimize
 
 import SUAVE
 from SUAVE.Core import Data, Units
@@ -91,7 +92,161 @@ def aeroSweep(vehicle, alphas, machs, altitude, deltaT=0):
 
     return results
 
-def flightMission(Aircraft, range, fuel, payload, climbType, cruiseAlt):
+def flightEndurance(Aircraft, payload, fuel, holdingAltitude=1500/3.281, holdingIAS=230/1.944):
+    """Estimate the endurance of the vehicle with given payload and initial fuel at specified conditions.
+
+    Args:
+        Aircraft (Container): Baseline or Derivative containing SUAVE.Vehicle.Vehicle object.
+        payload (float): Payload, kg.
+        fuel (float): Initial fuel, kg.
+        holdingAltitude (float): Altitude, m. Defaults to 1500 ft (see ICAO Annex 6).
+        holdingIAS (float): Indicated airspeed, m/s. Defaults to 230 kts, standard ICAO limit at default altitude.
+
+    Returns:
+        float: Estimated endurance, s.
+    """
+
+    vehicle = Aircraft.suaveVehicle
+    averageMass = vehicle.mass_properties.operating_empty + payload + fuel/2
+
+    # Atmospheric conditions at holding altitude
+    atmo = SUAVE.Analyses.Atmospheric.US_Standard_1976()
+    atmo.features.planet = SUAVE.Analyses.Planets.Planet().features
+
+    g = atmo.features.planet.sea_level_gravity
+    cp = atmo.fluid_properties.specific_heat_capacity
+    gamma = cp / (cp - atmo.fluid_properties.gas_specific_constant)
+
+    holdingConds = atmo.compute_values(altitude=holdingAltitude, temperature_deviation=0)
+
+    rho = holdingConds.density[:,None][0]
+    a = holdingConds.speed_of_sound[:,None][0]
+    mu = holdingConds.dynamic_viscosity[:,None][0]
+    p = holdingConds.pressure[:,None][0]
+    T = holdingConds.temperature[:,None][0]
+
+    holdingTAS = holdingIAS * np.sqrt(1.225/rho)
+    holdingMach = holdingTAS/a
+
+    # Average lift coefficient
+    holdingCl = averageMass*g/(vehicle.reference_area*0.5*rho*(holdingTAS**2))
+
+    # Aero analysis - need to sweep alpha to match Cl, then lookup L/D at this Cl
+    results = aeroSweep(vehicle = Aircraft.suaveVehicle,
+                        alphas = np.linspace(-1*np.pi/180, 6*np.pi/180, 1000),
+                        machs = np.array([holdingMach[0,0]]),
+                        altitude = holdingAltitude)
+    closestClIndex = np.argmin(np.abs(np.subtract(results["totalLift"][0], holdingCl)))
+    holdingLD = results["liftToDrag"][0,closestClIndex]
+
+    holdingThrust = averageMass*g/holdingLD # Level flight, no acceleration
+
+    # Initialise state object needed for obtaining turbofan SFC
+    state = SUAVE.Analyses.Mission.Segments.Conditions.State()
+    state.conditions = SUAVE.Analyses.Mission.Segments.Conditions.Aerodynamics()
+
+    state.conditions.freestream.isentropic_expansion_factor = gamma
+    state.conditions.freestream.specific_heat_at_constant_pressure = cp
+
+    state.conditions.freestream.pressure = p
+    state.conditions.freestream.temperature = T
+    state.conditions.freestream.speed_of_sound = a
+
+    state.conditions.freestream.velocity = holdingMach[0,0]*a
+    state.conditions.freestream.mach_number = holdingMach[0,0]
+
+    state.conditions.freestream.gravity = g
+
+    state.conditions.aerodynamics.angle_of_attack = results["alphas"][closestClIndex]
+    state.conditions.propulsion.throttle = 0.0
+
+    def thrustError(throttle):
+        state.conditions.propulsion.throttle = throttle
+        thrustResult = vehicle.networks.turbofan.evaluate_thrust(state)
+        return np.abs(holdingThrust - thrustResult.thrust_force_vector[0,0])
+    
+    holdingThrottle = optimize.minimize_scalar(thrustError, bounds=(0, 1)).x
+    state.conditions.propulsion.throttle = holdingThrottle
+    holdingThrustResult = vehicle.networks.turbofan.evaluate_thrust(state)
+
+    holdingFuelRate = holdingThrustResult.vehicle_mass_rate[0,0]
+
+    t = fuel/holdingFuelRate
+
+    return t
+
+def ICAOreserve(Aircraft, payload, fuel):
+    altitude = 1500/3.281 # ft
+    IAS = 230/1.944 # kts
+
+    endurance = flightEndurance(Aircraft, payload, fuel, holdingAltitude=altitude, holdingIAS=IAS)
+
+    contingency_reserve = np.max((fuel*5*60/endurance, 0.05*fuel)) # Max of 5 minutes holding endurance or 5% of trip fuel
+    alternate_reserve = fuel*15*60/endurance # 15 minutes holding endurance when no destination alternate aerodrome is specified
+    final_reserve = fuel*30*60/endurance
+
+    return contingency_reserve + alternate_reserve + final_reserve
+
+def climbDescentStages(Aircraft, endAltitude):
+    """Identify the climb and descent stages for a flight with a maximum given altitude.
+
+    Args:
+        Aircraft (Container): Baseline or Derivative containing climb and descent stage information.
+        endAltitude (float): Altitude at end of climb and start of descent, m.
+
+    Raises:
+        ValueError: Climb altitude exceeds end altitude of final climb segment.
+
+    Returns:
+        (list): List of list of climb segment EASs, climb segment Machs, final climb segment index, climb segment climb rates, climb segment end altitudes
+    """
+    endAltitude *= 3.281 # Convert to ft
+
+    if endAltitude > Aircraft.climbEndAlts[-1]:
+        raise ValueError(f"Specified climb altitude {endAltitude:.1f} ft exceeds altitude at end of last climb segment ({Aircraft.climbEndAlts[-1]:.1f} ft)")
+
+    # For a given max flight level guess -
+    # identify the climb and descent stages
+    # Fly these stages with cruise segment = 0 km 
+
+    # Find climb and descent stages for this guess
+    i = 0
+    for EndAlt in Aircraft.climbEndAlts:
+        if EndAlt > endAltitude:
+            climbIndex = i + 1
+            break
+        else:
+            i += 1
+    if climbIndex > len(Aircraft.climbEASs):
+        climbEASs = Aircraft.climbEASs
+        climbMachs = Aircraft.climbMachs
+    else:
+        climbEASs = Aircraft.climbEASs[:climbIndex]
+        climbMachs = []
+    climbRates = Aircraft.climbRates[:climbIndex]
+    climbEndAltitudes = Aircraft.climbEndAlts[:climbIndex]
+
+    i = 0
+    for EndAlt in Aircraft.descentEndAlts:
+        if EndAlt < endAltitude:
+            descentIndex = i
+            break
+        else:
+            i += 1
+    # Flight descent stages = Aircraft descent stages - descentIndex
+    if Aircraft.descentStages - descentIndex > len(Aircraft.descentEASs):
+        descentEASs = Aircraft.descentEASs
+        descentMachs = Aircraft.descentMachs[-(Aircraft.descentStages - descentIndex - len(Aircraft.descentEASs)):]
+    else:
+        descentEASs = Aircraft.descentEASs[descentIndex-1:]
+        descentMachs = []
+    descentRates = Aircraft.descentRates[descentIndex:]
+    descentEndAltitudes = Aircraft.descentEndAlts[descentIndex:]
+
+    return climbEASs, climbMachs, climbIndex, climbRates, climbEndAltitudes, descentMachs, descentEASs, descentRates, descentEndAltitudes
+
+
+def flightMission(Aircraft, cruiseRange, fuel, payload, climbType, cruiseAlt):
     """Fly an aircraft for one mission. Fuel burn can exceed allocated fuel load.
 
     Args:
@@ -181,7 +336,7 @@ def flightMission(Aircraft, range, fuel, payload, climbType, cruiseAlt):
 
         configs = SUAVE.Components.Configs.Config.Container()
 
-        climbTypes = ("CruiseOnly")
+        climbTypes = ("CruiseOnly", "AircraftDefined", "ClimbDescentOnly")
         if climbType not in climbTypes:
             raise ValueError(f"Cruise type '{climbType}' unsupported. Must be one of {climbTypes}")
         elif climbType is "CruiseOnly":
