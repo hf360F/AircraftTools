@@ -16,100 +16,103 @@ from copy import deepcopy
 
 A320 = base.Baseline("Airbus A320-200ceo")
 
-A321_deltaOEW = 6400-1600 # kg, difference from A320 (200 kg / row x 8 rows)
-A321_deltaMZFW = 11300 # kg, difference from A320
-A321_stretchLength = 6.9 # m, from A320
+if False: # Define derivatives
+    A321_deltaOEW = 6400-1600 # kg, difference from A320 (200 kg / row x 8 rows)
+    A321_deltaMZFW = 11300 # kg, difference from A320
+    A321_stretchLength = 6.9 # m, from A320
 
-# A320 dorsal tank derivative - max ferry range
-H2_A320_stockL = dv.Derivative(A320, "H2_MZFW+0_lrg")
-tankL = dv.Tank(usableLH2=7600.0,
-                ventPressure=1.5,
-                aspectRatio=6.0,
-                ullageFraction=0.05,
-                endGeometry="2:1elliptical",
-                fidelity="Overall",
-                etaGrav=0.55,
-                t_ins=0.15,
-                t_wall=0.005,
-                show=False)
-H2_A320_stockL.ConvertToLH2(tankStyle="DorsalOnly",
-                     dorsalTank=tankL, dorsalxsecNum=10, dorsalxStart=3.0,
-                     Sfront=2.5, Dfront=0.15, Saft=3.5, Daft=0.35)
+    # A320 dorsal tank derivative - max ferry range
+    H2_A320_stockL = dv.Derivative(A320, "H2_MZFW+0_lrg")
+    tankL = dv.Tank(usableLH2=7600.0,
+                    ventPressure=1.5,
+                    aspectRatio=6.0,
+                    ullageFraction=0.05,
+                    endGeometry="2:1elliptical",
+                    fidelity="Overall",
+                    etaGrav=0.55,
+                    t_ins=0.15,
+                    t_wall=0.005,
+                    show=False)
+    H2_A320_stockL.ConvertToLH2(tankStyle="DorsalOnly",
+                        dorsalTank=tankL, dorsalxsecNum=10, dorsalxStart=3.0,
+                        Sfront=2.5, Dfront=0.15, Saft=3.5, Daft=0.35)
 
-# Uprated MZFW to A321 value
-H2_A320_MZFWplusL = deepcopy(H2_A320_stockL)
-H2_A320_MZFWplusL.modName = "A321_MZFW_dors"
-H2_A320_MZFWplusL.dispName = H2_A320_MZFWplusL.baseline.dispName + "_" + H2_A320_MZFWplusL.modName
-H2_A320_MZFWplusL.suaveVehicle.mass_properties.max_zero_fuel += A321_deltaMZFW
-#H2_A320_MZFWplusL.suaveVehicle.mass_properties.operating_empty += A321_deltaOEW 
-H2_A320_MZFWplusL.suaveVehicle.mass_properties.max_takeoff = H2_A320_MZFWplusL.suaveVehicle.mass_properties.max_zero_fuel
-H2_A320_MZFWplusL.suaveVehicle.mass_properties.max_payload = H2_A320_MZFWplusL.suaveVehicle.mass_properties.max_zero_fuel - H2_A320_MZFWplusL.suaveVehicle.mass_properties.operating_empty
+    # Uprated MZFW to A321 value
+    H2_A320_MZFWplusL = deepcopy(H2_A320_stockL)
+    H2_A320_MZFWplusL.modName = "A321_MZFW_dors"
+    H2_A320_MZFWplusL.dispName = f"A320, {tankL.usableLH2/1000:.1f}T LH2 dorsal w/ A321 MZFW"
+    H2_A320_MZFWplusL.suaveVehicle.mass_properties.max_zero_fuel += A321_deltaMZFW
+    H2_A320_MZFWplusL.suaveVehicle.mass_properties.max_takeoff += A321_deltaMZFW
+    #H2_A320_MZFWplusL.suaveVehicle.mass_properties.operating_empty += A321_deltaOEW 
+    H2_A320_MZFWplusL.suaveVehicle.mass_properties.max_payload = H2_A320_MZFWplusL.suaveVehicle.mass_properties.max_zero_fuel - H2_A320_MZFWplusL.suaveVehicle.mass_properties.operating_empty
 
-# A320 dorsal tank derivative - most common range
-H2_A320_stockS = dv.Derivative(A320, "H2_MZFW+0_sml")
-tankS = dv.Tank(usableLH2=4000.0,
-                ventPressure=1.5,
-                aspectRatio=3.3,
-                ullageFraction=0.05,
-                endGeometry="2:1elliptical",
-                fidelity="Overall",
-                etaGrav=0.55,
-                t_ins=0.15,
-                t_wall=0.005,
-                show=False)
-H2_A320_stockS.ConvertToLH2(tankStyle="DorsalOnly",
-                     dorsalTank=tankS, dorsalxsecNum=10, dorsalxStart=3.0,
-                     Sfront=2.5, Dfront=0.15, Saft=3.5, Daft=0.35)
+    # A320 dorsal tank derivative - most common range
+    H2_A320_stockS = dv.Derivative(A320, "H2_MZFW+0_sml")
+    tankS = dv.Tank(usableLH2=4000.0,
+                    ventPressure=1.5,
+                    aspectRatio=3.3,
+                    ullageFraction=0.05,
+                    endGeometry="2:1elliptical",
+                    fidelity="Overall",
+                    etaGrav=0.55,
+                    t_ins=0.15,
+                    t_wall=0.005,
+                    show=False)
+    H2_A320_stockS.ConvertToLH2(tankStyle="DorsalOnly",
+                        dorsalTank=tankS, dorsalxsecNum=10, dorsalxStart=3.0,
+                        Sfront=2.5, Dfront=0.15, Saft=3.5, Daft=0.35)
 
-# Uprated MZFW to A321 value
-H2_A320_MZFWplusS = deepcopy(H2_A320_stockS)
-H2_A320_MZFWplusS.modName = "A321_MZFW_dors"
-H2_A320_MZFWplusS.dispName = H2_A320_MZFWplusS.baseline.dispName + "_" + H2_A320_MZFWplusS.modName
-H2_A320_MZFWplusS.suaveVehicle.mass_properties.max_zero_fuel += A321_deltaMZFW
-#H2_A320_MZFWplusS.suaveVehicle.mass_properties.operating_empty += A321_deltaOEW 
-H2_A320_MZFWplusS.suaveVehicle.mass_properties.max_takeoff = H2_A320_MZFWplusS.suaveVehicle.mass_properties.max_zero_fuel
-H2_A320_MZFWplusS.suaveVehicle.mass_properties.max_payload = H2_A320_MZFWplusS.suaveVehicle.mass_properties.max_zero_fuel - H2_A320_MZFWplusS.suaveVehicle.mass_properties.operating_empty
+    # Uprated MZFW to A321 value
+    H2_A320_MZFWplusS = deepcopy(H2_A320_stockS)
+    H2_A320_MZFWplusS.modName = "A321_MZFW_dors"
+    H2_A320_MZFWplusS.dispName = f"A320, {tankS.usableLH2/1000:.1f}T LH2 dorsal w/ A321 MZFW"
+    H2_A320_MZFWplusS.suaveVehicle.mass_properties.max_zero_fuel += A321_deltaMZFW
+    H2_A320_MZFWplusS.suaveVehicle.mass_properties.max_takeoff += A321_deltaMZFW
+    #H2_A320_MZFWplusS.suaveVehicle.mass_properties.operating_empty += A321_deltaOEW 
+    H2_A320_MZFWplusS.suaveVehicle.mass_properties.max_payload = H2_A320_MZFWplusS.suaveVehicle.mass_properties.max_zero_fuel - H2_A320_MZFWplusS.suaveVehicle.mass_properties.operating_empty
 
 
-# A320 with internal tank
-internalTank = dv.Tank(usableLH2=3610,
+    """
+    # A320 with internal tank
+    internalTank = dv.Tank(usableLH2=3610,
+                            ventPressure=1.5,
+                            aspectRatio=1.83,
+                            ullageFraction=0.05,
+                            endGeometry="2:1elliptical",
+                            fidelity="Overall",
+                            etaGrav=0.65,
+                            t_ins=0.15,
+                            t_wall=0.005,
+                            show=False,
+                            verbose=True)
+    H2_A321_int = dv.Derivative(A320, "A321_int")
+    H2_A321_int.stretchFuselage(extraLength=6.9, OEWincrease=A321_deltaOEW) # A320 to A321
+    H2_A321_int.suaveVehicle.mass_properties.max_zero_fuel += A321_deltaMZFW
+    H2_A321_int.ConvertToLH2(tankStyle="Internal",
+                            internalTank=internalTank)
+
+
+    totalLH2 = tankL.usableLH2
+    dorsTank2 = dv.Tank(usableLH2 = tankL.usableLH2 - internalTank.usableLH2,
                         ventPressure=1.5,
-                        aspectRatio=1.83,
+                        aspectRatio=12,
                         ullageFraction=0.05,
                         endGeometry="2:1elliptical",
                         fidelity="Overall",
-                        etaGrav=0.65,
+                        etaGrav = tankL.etaGrav,
                         t_ins=0.15,
                         t_wall=0.005,
                         show=False,
                         verbose=True)
-H2_A321_int = dv.Derivative(A320, "A321_int")
-H2_A321_int.stretchFuselage(extraLength=6.9, OEWincrease=A321_deltaOEW) # A320 to A321
-H2_A321_int.suaveVehicle.mass_properties.max_zero_fuel += A321_deltaMZFW
-H2_A321_int.ConvertToLH2(tankStyle="Internal",
-                         internalTank=internalTank)
 
-
-totalLH2 = tankL.usableLH2
-dorsTank2 = dv.Tank(usableLH2 = tankL.usableLH2 - internalTank.usableLH2,
-                    ventPressure=1.5,
-                    aspectRatio=12,
-                    ullageFraction=0.05,
-                    endGeometry="2:1elliptical",
-                    fidelity="Overall",
-                    etaGrav = tankL.etaGrav,
-                    t_ins=0.15,
-                    t_wall=0.005,
-                    show=False,
-                    verbose=True)
-
-H2_A321_intdors = dv.Derivative(A320, "A321_int+dors")
-H2_A321_intdors.stretchFuselage(extraLength=A321_stretchLength, OEWincrease=A321_deltaOEW) # Stretch to 321 size
-H2_A321_intdors.suaveVehicle.mass_properties.max_zero_fuel += A321_deltaMZFW
-H2_A321_intdors.ConvertToLH2(tankStyle="Both",
-                            dorsalTank=dorsTank2, dorsalxsecNum=10, dorsalxStart=3.0,
-                            Sfront=2.5, Dfront=0.15, Saft=3.5, Daft=0.35,
-                            internalTank=internalTank)
+    H2_A321_intdors = dv.Derivative(A320, "A321_int+dors")
+    H2_A321_intdors.stretchFuselage(extraLength=A321_stretchLength, OEWincrease=A321_deltaOEW) # Stretch to 321 size
+    H2_A321_intdors.suaveVehicle.mass_properties.max_zero_fuel += A321_deltaMZFW
+    H2_A321_intdors.ConvertToLH2(tankStyle="Both",
+                                dorsalTank=dorsTank2, dorsalxsecNum=10, dorsalxStart=3.0,
+                                Sfront=2.5, Dfront=0.15, Saft=3.5, Daft=0.35,
+                                internalTank=internalTank)
+    """
 
 def plot_mission(results,line_style='bo-'):
     """This function plots the results of the mission analysis and saves those results to 
@@ -270,12 +273,13 @@ if False:
     plt.show()
 
 # Fixed range cruise flight; given payload, determine required fuel
-if False:
-    results = fixedRangeMission(Aircraft = A320Dorsal,
-                                range = 3500 * Units.km,
+if True:
+    results = fixedRangeMission(Aircraft = A320,
+                                range = 500 * Units.km,
                                 payload = 5000 * Units.kg,
+                                ICAOreserves = True,
                                 climbType = "AircraftDefined",
-                                cruiseAlt = 10668 * Units.m)
+                                cruiseAlt = 10667 * Units.m)
     
     plot_mission(results)
     plt.show()
@@ -283,8 +287,8 @@ if False:
 # Produce payload range diagrams
 if False:
     ncols = 80
-    Aircrafts = (A320, H2_A320_MZFWplusL, H2_A320_MZFWplusS)
-    colours = ("red", "navy", "lightblue")
+    Aircrafts = (A320, H2_A320_MZFWplusS, H2_A320_MZFWplusL)
+    colours = ("red", "lightblue", "navy")
     i = 0
 
     fig, ax = plt.subplots(1, 1, dpi=200)
@@ -323,7 +327,7 @@ if False:
                                             fuelReserve = fuelReserve,
                                             payload = payloads[j],
                                             climbType = "AircraftDefined",
-                                            cruiseAlt = 10668 * Units.m)
+                                            cruiseAlt = 10667 * Units.m)
 
                 ranges[j] = results.segments[-1].conditions.frames.inertial.aircraft_range[-1,0]
             
@@ -345,10 +349,10 @@ if False:
 
 # FPPR spectrum
 # Fly along the payload-range spectrum
-if True:    
+if False:
     fig, ax = plt.subplots(1, 1, dpi=200)
 
-    nflights = 10
+    nflights = 20
     Aircrafts = (A320, H2_A320_MZFWplusS, H2_A320_MZFWplusL) #A320
 
     for Aircraft in Aircrafts:
@@ -365,19 +369,15 @@ if True:
             fuelGuess *= fuelReserve/fuelGuess
             i += 1
 
-
-        fuels = np.linspace(fuelGuess*1.01, Aircraft.suaveVehicle.mass_properties.max_fuel, nflights)
+        fuels = np.linspace(fuelGuess*1.1, Aircraft.suaveVehicle.mass_properties.max_fuel, nflights)
         fuelBurns = np.zeros_like(fuels)
         ranges = np.zeros_like(fuels)
 
         payloads = []
         for fuel in fuels:
-            payloads.append(11500)
-            #payloads.append(np.min([Aircraft.suaveVehicle.mass_properties.max_takeoff - fuel - Aircraft.suaveVehicle.mass_properties.operating_empty,
-            #                        Aircraft.suaveVehicle.mass_properties.max_payload]))
-
-        # We need to find climb and descend duration/distance functions.
-        # i.e. climb to FL150, descent from FL150 takes 30 mins -> if endurance = 60 mins FL150 is good choice
+            #payloads.append(11500)
+            payloads.append(np.min([Aircraft.suaveVehicle.mass_properties.max_takeoff - fuel - Aircraft.suaveVehicle.mass_properties.operating_empty,
+                                    Aircraft.suaveVehicle.mass_properties.max_payload]))
 
         for i in range(nflights):
 
@@ -386,11 +386,11 @@ if True:
             fuelReserve = np.max((fuels[i]*5*60/t_max, 0.05*fuels[i])) + ((30+15)*60)*fuels[i]/t_max
 
             results = fixedFuelMission(Aircraft = Aircraft,
-                                        fuel = fuels[i],
-                                    fuelReserve = fuelReserve,
-                                    payload = payloads[i],
-                                    climbType = "AircraftDefined",
-                                    cruiseAlt = 10668 * Units.m)
+                                       fuel = fuels[i],
+                                       fuelReserve = fuelReserve,
+                                       payload = payloads[i],
+                                       climbType = "AircraftDefined",
+                                       cruiseAlt = 10667 * Units.m)
 
             ranges[i] = results.segments[-1].conditions.frames.inertial.aircraft_range[-1,0]
             fuelBurns[i] = results.segments[0].conditions.weights.total_mass[0,0] - results.segments[-1].conditions.weights.total_mass[-1,0]
