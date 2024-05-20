@@ -221,7 +221,7 @@ class Derivative:
             frontxs = np.linspace(0, frontsoln.x, fairingResolution)
             frontys = [maxHeight*fairingFront(x, A1=0, L1=Lfront, S1=Sfront) for x in frontxs]
             aftxs = np.linspace(aftsoln.x, 0, fairingResolution)
-            aftys = np.flip([maxHeight*(1+fairingAft(x, A2=0, L2=Laft, S2=Laft)) for x in aftxs])
+            aftys = np.flip([maxHeight*(1+fairingAft(x, A2=0, L2=Laft, S2=Saft)) for x in aftxs])
             aftxs = np.subtract(aftxs, aftxs[0])
 
             # Geometry interpolation functions
@@ -237,9 +237,29 @@ class Derivative:
                                                            bounds=(0, np.max(aftxs)), tol=tol)
             aftOffset = aftOffsetSoln.x
 
-            xs = np.linspace(-frontOffset, tank.Lo+aftOffset+frontOffset, 500)
-            ys = [maxHeight*(fairingFront(x, A1=-frontOffset, L1=Lfront, S1=Sfront)
-                             +fairingAft(x, A2=tank.Lo+aftOffset+frontOffset, L2=Laft, S2=Saft)) for x in xs]
+            # Peform check on if fairing fits tank - we are now also considering interaction between fairing functions
+            failFlag = True
+            while failFlag == True:
+
+                xs = np.linspace(-frontOffset, tank.Lo+aftOffset+frontOffset, 500)
+                ys = [np.max((maxHeight*(fairingFront(x, A1=-frontOffset, L1=Lfront, S1=Sfront)
+                                +fairingAft(x, A2=tank.Lo+aftOffset, L2=Laft, S2=Saft)), 0)) for x in xs]
+                
+                middleFlag = False
+                for i in range(len(xs)):
+                    if xs[i] < tank.Lo/2:
+                        ytank = tankInterp(xs[i])*0.998
+                    else:
+                        ytank = tankInterp(-xs[i]+tank.Lo)*0.998
+
+                    if ys[i] < ytank:
+                        middleFlag = True
+                        break
+
+                if middleFlag == False:
+                    failFlag = False
+                else:
+                    aftOffset *= 1.02
 
             wettedAreaProxy = np.trapz(np.power(ys, 2), xs)
             #print(f"Oversize {oversizeFactor:.3f}: Forward offset {frontOffset:.3f} m, aft offset {aftOffset:.3f} m, area FOM {wettedAreaProxy:.1f}")
@@ -256,7 +276,7 @@ class Derivative:
         if show:
             fig, ax = plt.subplots(1, 1, dpi=200)
             ax.plot(np.add(tankxs, frontOffset), np.add(tankys, tank.Do/2), color="red")
-            ax.plot(xs, ys, color="blue")
+            ax.plot(xs, ys, color="blue")            
             ax.set_aspect("equal")
             ax.grid()
             ax.set_xlabel("x, $m$")
@@ -653,8 +673,8 @@ class Tank:
         self.T_sat = TsatH2(self.ventPressure)
 
         if self.fidelity == "AutoInsulation":
-            deltahvap = hvlH2(self.T_sat)
-            Qmax = self.deltahvap*self.mdot_boiloff
+            self.deltahvap = hvlH2(self.T_sat)
+            Qmax = self.deltahvap*self.mdot_boiloff*1000 # Watts
             self.t_ins = 0 # Initial guess
 
             deltaTwall = (273.15+30 - self.T_sat) # K
@@ -663,9 +683,9 @@ class Tank:
             lambda_ins = 0.026 # W/mK
             rho_ins = 50 # kg/m^3
 
-        if self.fidelity == "Overall":
+        if self.fidelity == "Overall" or "AutoInsulation":
             if self.endGeometry == "2:1elliptical":
-                k_end = 0.13384 # Scaling constant: volume of 1 metre diameter end
+                self.k_end = 0.13384 # Scaling constant: volume of 1 metre diameter end
 
                 # Determine required pressure vessel volume using saturated phase densities
                 self.T_sat = scipy.optimize.minimize_scalar(lambda T: np.abs(psatH2(T) - ventPressure),
@@ -682,29 +702,32 @@ class Tank:
                 if verbose:
                     print(f"Vessel structural weight {self.m_struct:.1f} kg, empty weight {self.m_empty:.1f} kg including vapour")
 
-                # Total wall thickness
-                self.t_tot = self.t_ins + self.t_wall
+                t_insold = -1
+                ins_rel_tol = 1E-2
 
-                # Function enforcing volume for given ID by varying length
-                newLi = lambda Di: Di/2 + 4*(self.tankCapacity - 2*k_end*Di**3)/(np.pi*(Di**2))
+                while self.t_ins > t_insold*(1+ins_rel_tol) or self.t_ins < t_insold*(1-ins_rel_tol):
+                    # Total wall thickness
+                    self.t_tot = self.t_ins + self.t_wall
 
-                # Error in aspect ratio for given ID
-                ARresidual = lambda Di: np.abs((newLi(Di)+2*self.t_tot)/(Di+2*self.t_tot) - self.aspectRatio)
+                    # Function enforcing volume for given ID by varying length
+                    newLi = lambda Di: Di/2 + 4*(self.tankCapacity - 2*self.k_end*Di**3)/(np.pi*(Di**2))
 
-                soln = scipy.optimize.minimize_scalar(ARresidual)
-                self.Di = soln.x
-                self.Li = newLi(self.Di)
+                    # Error in aspect ratio for given ID
+                    ARresidual = lambda Di: np.abs((newLi(Di)+2*self.t_tot)/(Di+2*self.t_tot) - self.aspectRatio)
 
-                self.Awet = 0
+                    soln = scipy.optimize.minimize_scalar(ARresidual)
+                    self.Di = soln.x
+                    self.Li = newLi(self.Di)
 
-                if fidelity == "AutoInsulation":
-                    t_insold = self.t_ins
+                    # Internal area (approx external area for thin wall and insulation)
+                    self.Aends = 2*np.pi*(1/4 + np.sqrt(3)*np.log(np.sqrt(3)+2)/24)*(self.Di**2)
+                    self.Awet = self.Aends + np.pi*self.Di*(self.Li - self.Di/2)
 
-                    self.Awet = 0
-                    self.t_ins = deltaTwall*self.Awet*lambda_ins/Qmax
-                    while np.abs((self.t_ins-t_insold)/t_insold) > 1E-2:
-                        pass
-                        # loop 
+                    if self.fidelity != "AutoInsulation":
+                        break
+                    else:
+                        t_insold = self.t_ins
+                        self.t_ins = deltaTwall*self.Awet*lambda_ins/Qmax
 
                 if self.Li < self.Di/2:
                     raise ValueError(f"Negative cylinder length ({self.Li-self.Di/2:.2f} m): aspect ratio is unreachable.")
@@ -714,7 +737,7 @@ class Tank:
                 self.endLength = self.Di/4 + self.t_tot
 
                 if verbose:
-                    print(f"Vessel geometry converged with external diameter {self.Do:.2f} m, length {self.Lo:.2f} m")
+                    print(f"Vessel geometry converged with external diameter {self.Do:.2f} m, length {self.Lo:.2f} m, insulation thickness {self.t_ins*1000:.2f} mm")
 
                 # Generate tank profile
                 CR = self.Di*0.9045
