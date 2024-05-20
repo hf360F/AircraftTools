@@ -144,15 +144,15 @@ def plot_mission(results,line_style='bo-'):
     return
 
 # Drag polar and breakdown
-if False:
-    Aircrafts = (A320, H2_A320_MZFWplusL)
+if True:
+    Aircrafts = list([A320])#, H2_A320_MZFWplusL)
     colours = ("red", "blue")
     i = 0
 
     for Aircraft in Aircrafts:
         results = aeroSweep(vehicle = Aircraft.suaveVehicle,
-                            alphas = np.linspace(-1*np.pi/180, 6*np.pi/180, 100),
-                            machs = np.array([0.1, 0.6, Aircraft.cruise_mach]),
+                            alphas = np.linspace(-1*np.pi/180, 6*np.pi/180, 1000),
+                            machs = np.array([0.3, 0.6, Aircraft.cruise_mach]),
                             altitude = 10668)
         
         targetMach = Aircraft.cruise_mach
@@ -192,11 +192,11 @@ if False:
         ax.legend()
         ax.grid()
 
-        fig = plt.figure(dpi=200)
-        ax2 = fig.add_subplot(121)
-        ax3 = fig.add_subplot(122)
-        fig.tight_layout()
-        fig.subplots_adjust(wspace=0)
+        fig, ax2 = plt.subplots(1, 1, dpi=200)
+        #ax2 = fig.add_subplot(121)
+        #ax3 = fig.add_subplot(122)
+        #fig.tight_layout()
+        #fig.subplots_adjust(wspace=0)
 
         def formatter1(rel_val):
             abs_val = rel_val*np.sum(dragBreakdown)/100
@@ -215,8 +215,8 @@ if False:
         ax2.pie(dragBreakdown, labels=dragLabels, autopct=formatter1, startangle=angle, explode=explode)
         fig.suptitle(f"{Aircraft.dispName} drag breakdown\nM = {mach:.3f}, h = {results['altitude']:.0f} m, $C_L$ = {Cl:.3f}"\
                      r" ($\alpha$ = "+f"{180*alpha/np.pi:.2f}"+r"$^{\circ}$),"\
-                     f" $C_D$ = {np.sum(dragBreakdown):.4f}")
-        
+                     f" $C_D$ = {np.sum(dragBreakdown):.3f}")
+        """
         # Component breakdown for parasitic drag
         parasiticDragFull = results["parasiticDragFull"][nearestMachIndex][nearestClIndex]
 
@@ -226,8 +226,6 @@ if False:
         parasiticLabels = ["Horizontal tail",
                            "Vertical tail",
                            "Wing"]
-
-        #print(parasiticDragFull)
 
         for fuselage, label in zip(parasiticDragFull["fuselages"], parasiticDragFull["fuselages"].keys()):
             fuselageDrag = 0
@@ -269,6 +267,16 @@ if False:
         con.set_color([0, 0, 0])
         ax3.add_artist(con)
         con.set_linewidth(2)
+
+        fig, ax = plt.subplots(1, 1, dpi=200)
+        bottom = 0
+        for dragType, dragLabel in zip(dragBreakdown, dragLabels):
+            p = ax.bar("Total", dragType, width=1, bottom=bottom)
+            bottom += dragType
+
+            ax.bar_label(p, labels=dragLabel, label_type="center")
+        """
+
 
     plt.show()
 
