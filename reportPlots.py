@@ -4,6 +4,7 @@ from copy import deepcopy
 import matplotlib.pyplot as plt
 from matplotlib.patches import ConnectionPatch
 from tqdm import tqdm
+import itertools
 
 import pickle
 import baseline as base
@@ -16,6 +17,7 @@ from SUAVE.Plots.Performance.Mission_Plots import *
 from SUAVE.Input_Output.OpenVSP.vsp_read import vsp_read
 from copy import deepcopy
 
+plt.style.use('seaborn-v0_8-dark-palette')
 
 ## Baseline aircraft definitions
 A320 = base.Baseline("Airbus A320-200ceo")
@@ -24,6 +26,12 @@ A320 = base.Baseline("Airbus A320-200ceo")
 colours = ("blue", "green", "firebrick")
 fsizefull = 16
 ddpi = 200
+
+## Bar charts
+if False:
+    fig, ax = plt.subplots(1, 1, dpi=ddpi)
+
+    # Takeoff, midcruise, landing
 
 ## Global flight distance distribution
 if False:
@@ -76,69 +84,129 @@ if False:
     plt.show()
 
 ## Distributions
-if True:
-    show = False
-    # Air service one, Sector length distribution comparison for Ryanair, easyJet and Wizz Air; similarities and differences
-    rangeBoundsRyanair = [142, 400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600, 2800, 3000, 3250, 3500, 4093]
-    rangeBoundsEasyjet = [122, 400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600, 2800, 3000, 3250, 3500, 4147]
-    
-    rangesRyanair = np.zeros(len(rangeBoundsRyanair)-1)
-    rangesEasyjet = np.zeros_like(rangesRyanair)
+show = False
+# Air service one, Sector length distribution comparison for Ryanair, easyJet and Wizz Air; similarities and differences
+rangeBoundsRyanair = [142, 400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600, 2800, 3000, 3250, 3500, 4093]
+rangeBoundsEasyjet = [122, 400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400, 2600, 2800, 3000, 3250, 3500, 4147]
+rangeBoundsUniform = np.linspace(150, 4300, len(rangeBoundsRyanair))
 
-    colourRyanair = np.divide((7, 53, 144), 255)
-    colourEasyjet = np.divide((255, 102, 0), 255)
+rangesRyanair = np.zeros(len(rangeBoundsRyanair)-1)
+rangesEasyjet = np.zeros_like(rangesRyanair)
+rangesUniform = np.zeros_like(rangesRyanair)
 
-    for i in range(len(rangeBoundsRyanair)-1):
-        rangesRyanair[i] = (rangeBoundsRyanair[i+1] + rangeBoundsRyanair[i])/2
-        rangesEasyjet[i] = (rangeBoundsEasyjet[i+1] + rangeBoundsEasyjet[i])/2
+colourRyanair = np.divide((7, 53, 144), 255)
+colourEasyjet = np.divide((255, 102, 0), 255)
+colourUniform = "green"
 
-    freqsRyanair = np.divide([2.922, 7.394, 9.374, 11.08, 12.48, 11.52, 10.53, 10.77, 6.985, 4.356, 3.093, 2.410, 2.103, 2.205, 1.625, 0.4301, 0.4301], 100)
-    freqsRyanair = np.divide(freqsRyanair, np.sum(freqsRyanair)) # Rescale to sum to 100%
-    wfreqsRyanair = np.multiply(freqsRyanair, rangesRyanair)
-    wfreqsRyanair = np.divide(wfreqsRyanair, np.sum(wfreqsRyanair))
+for i in range(len(rangeBoundsRyanair)-1):
+    rangesRyanair[i] = (rangeBoundsRyanair[i+1] + rangeBoundsRyanair[i])/2
+    rangesEasyjet[i] = (rangeBoundsEasyjet[i+1] + rangeBoundsEasyjet[i])/2
+    rangesUniform[i] = (rangeBoundsUniform[i+1] + rangeBoundsUniform[i])/2
 
-    freqsEasyjet = np.divide([4.083, 10.19, 9.647, 11.12, 9.579, 9.067, 8.418, 7.087, 5.414, 3.878, 3.332, 2.854, 3.673, 4.868, 3.025, 2.048, 1.796], 100)
-    freqsEasyjet = np.divide(freqsEasyjet, np.sum(freqsEasyjet)) # Rescale to sum to 100%
-    wfreqsEasyjet = np.multiply(freqsEasyjet, rangesEasyjet)
-    wfreqsEasyjet = np.divide(wfreqsEasyjet, np.sum(wfreqsEasyjet))
+freqsRyanair = np.divide([2.922, 7.394, 9.374, 11.08, 12.48, 11.52, 10.53, 10.77, 6.985, 4.356, 3.093, 2.410, 2.103, 2.205, 1.625, 0.4301, 0.4301], 100)
+freqsRyanair = np.divide(freqsRyanair, np.sum(freqsRyanair)) # Rescale to sum to 100%
+wfreqsRyanair = np.multiply(freqsRyanair, rangesRyanair)
+wfreqsRyanair = np.divide(wfreqsRyanair, np.sum(wfreqsRyanair))
 
-    if show:
-        fig, (ax, ax3) = plt.subplots(2, 1, dpi=ddpi, sharex=True)
-        #ax2 = ax.twinx()
-        #ax4 = ax3.twinx()
+freqsEasyjet = np.divide([4.083, 10.19, 9.647, 11.12, 9.579, 9.067, 8.418, 7.087, 5.414, 3.878, 3.332, 2.854, 3.673, 4.868, 3.025, 2.048, 1.796], 100)
+freqsEasyjet = np.divide(freqsEasyjet, np.sum(freqsEasyjet)) # Rescale to sum to 100%
+wfreqsEasyjet = np.multiply(freqsEasyjet, rangesEasyjet)
+wfreqsEasyjet = np.divide(wfreqsEasyjet, np.sum(wfreqsEasyjet))
 
-        l1 = ax.plot(rangesRyanair, freqsRyanair, color=colourRyanair, label="Ryanair")
-        #l2 = ax2.plot(rangesRyanair, np.cumsum(freqsRyanair), color="blue", linestyle="dashed", label="Ryanair cum.")
-        l3 = ax.plot(rangesEasyjet, freqsEasyjet, color=colourEasyjet, label="easyJet")
-        #l4 = ax2.plot(rangesEasyjet, np.cumsum(freqsEasyjet), color="orange", linestyle="dashed", label="easyJet cum.")
+freqsUniform = [1/(np.max(rangesUniform) - np.min(rangesUniform))]*len(rangesUniform)
+freqsUniform = np.divide(freqsUniform, np.sum(freqsUniform)) # Rescale to sum to 100%
+wfreqsUniform = np.multiply(freqsUniform, rangesUniform)
+wfreqsUniform = np.divide(wfreqsUniform, np.sum(wfreqsUniform))
 
-        #ax.set_xlim(0)
-        ax.set_ylim(0)
-        #ax2.set_ylim(0)
-        #ax.set_xlabel("Range, km")
-        ax.set_ylabel("Relative flight density")
-        #ax2.set_ylabel("Cum. fraction of flights")
-        ax.grid()
+def densityDist(name, smin=None, smax=None):
+    if name == "uniform":
+        if smin == None or smax == None:
+            raise ValueError("Must provide ranges for uniform distribution")
+        return 1/(smax-smin)
+    elif name == "ryanair":
+        if smin == None:
+            smin = np.min(rangesRyanair)
+        if smax == None:
+            smax = np.max(rangesRyanair)
 
-        lns = l1+l3#l1+l2+l3+l4
-        labs = []
-        for l in lns:
-            labs.append(l.get_label())
-        ax.legend(lns, labs, loc="best") #loc="center right")
+        if smin < np.min(rangesRyanair):
+            raise ValueError(f"Distribution minimum range {smin:.1f} km below minimum {np.min(rangesRyanair):.1f} km for {name}.")
+        if smax > np.max(rangesRyanair):
+            raise ValueError(f"Distribution maximum range {smax:.1f} km exceeds maximum {np.max(rangesRyanair):.1f} km for {name}.")
 
-        l5 = ax3.plot(rangesRyanair, wfreqsRyanair, color=colourRyanair)
-        l6 = ax3.plot(rangesEasyjet, wfreqsEasyjet, color=colourEasyjet)
-        #l7 = ax4.plot(rangesRyanair, np.cumsum(wfreqsRyanair), color="blue", linestyle="dashed")
-        #l8 = ax4.plot(rangesEasyjet, np.cumsum(wfreqsEasyjet), color="orange", linestyle="dashed")
+        # Compute fraction of original flight total between smin and smax
+        ranges1 = np.linspace(smin, smax, 1000)
+        ranges2 = np.linspace(np.min(rangesRyanair), np.max(rangesRyanair), 1000)
+        freqInterp = scipy.interpolate.interp1d(rangesRyanair, freqsRyanair, kind="linear")
 
-        ax3.set_xlim(0)
-        ax3.set_ylim(0)
-        ax3.set_xlabel("Range, km")
-        ax3.set_ylabel("Relative flight-km density")
-        #ax4.set_ylabel("Cum. fraction of km flown")
-        ax3.grid()
+    elif name == "easyjet":
+        if smin == None:
+            smin = np.min(rangesEasyjet)
+        if smax == None:
+            smax = np.max(rangesEasyjet)
 
-        plt.show()
+        if smin < np.min(rangesEasyjet):
+            raise ValueError(f"Distribution minimum range {smin:.1f} km below minimum {np.min(rangesEasyjet):.1f} km for {name}.")
+        if smax > np.max(rangesEasyjet):
+            raise ValueError(f"Distribution maximum range {smax:.1f} km exceeds maximum {np.max(rangesEasyjet):.1f} km for {name}.")
+
+        # Compute fraction of original flight total between smin and smax
+        ranges1 = np.linspace(smin, smax, 1000)
+        ranges2 = np.linspace(np.min(rangesEasyjet), np.max(rangesEasyjet), 1000)
+        freqInterp = scipy.interpolate.interp1d(rangesEasyjet, freqsEasyjet, kind="linear")
+
+    else:
+        raise ValueError("f'{name}' must be one of 'uniform', 'ryanair', 'easyjet'")
+
+    total = np.trapz([freqInterp(s) for s in ranges2], ranges2)
+    flightFraction = np.trapz([freqInterp(s) for s in ranges1], ranges1)/total
+    multiplier = 1/flightFraction # Rescale so integral is 1
+
+    return scipy.interpolate.interp1d(ranges1, [multiplier*freqInterp(s)/total for s in ranges1], kind="linear"), smin, smax
+
+if show:
+    fig, (ax, ax3, ax4) = plt.subplots(3, 1, dpi=ddpi, sharex=True)
+    #ax2 = ax.twinx()
+    #ax4 = ax3.twinx()
+
+    l1 = ax.plot(rangesRyanair, freqsRyanair, color=colourRyanair, label="Ryanair")
+    #l2 = ax2.plot(rangesRyanair, np.cumsum(freqsRyanair), color="blue", linestyle="dashed", label="Ryanair cum.")
+    l3 = ax.plot(rangesEasyjet, freqsEasyjet, color=colourEasyjet, label="easyJet")
+    #l4 = ax2.plot(rangesEasyjet, np.cumsum(freqsEasyjet), color="orange", linestyle="dashed", label="easyJet cum.")
+    l5 = ax.plot(rangesUniform, freqsUniform, color=colourUniform, label="Uniform")
+    # l6
+
+    #ax.set_xlim(0)
+    ax.set_ylim(0)
+    #ax2.set_ylim(0)
+    #ax.set_xlabel("Range, km")
+    ax.set_ylabel("Flight density")
+    #ax2.set_ylabel("Cum. fraction of flights")
+    ax.grid()
+
+    lns = l1+l3+l5#l1+l2+l3+l4+l5
+    labs = []
+    for l in lns:
+        labs.append(l.get_label())
+    ax.legend(lns, labs, loc="best") #loc="center right")
+
+    l7 = ax3.plot(rangesRyanair, wfreqsRyanair, color=colourRyanair)
+    l8 = ax3.plot(rangesEasyjet, wfreqsEasyjet, color=colourEasyjet)
+    l9 = ax3.plot(rangesUniform, wfreqsUniform, color=colourUniform)
+    l10 = ax4.plot(rangesRyanair, np.cumsum(wfreqsRyanair), color=colourRyanair)
+    l11 = ax4.plot(rangesEasyjet, np.cumsum(wfreqsEasyjet), color=colourEasyjet)
+    l12 = ax4.plot(rangesUniform, np.cumsum(wfreqsUniform), color=colourUniform)
+
+    ax4.set_xlim(0)
+    ax4.set_ylim(0)
+    ax4.set_xlabel("Range, km")
+    ax3.set_ylabel("Flight-km density")
+    ax4.set_ylabel("Cum. flight-km")
+    #ax4.set_ylabel("Cum. fraction of km flown")
+    ax3.grid()
+    ax4.grid()
+
+    plt.show()
 
 ## A320 custom weight buildup diagram
 if False:
@@ -147,11 +215,15 @@ if False:
     Aircraft = A320
     vehicle = Aircraft.suaveVehicle
 
-    payloads = [vehicle.mass_properties.max_payload, vehicle.mass_properties.max_payload, 0, 0]
-    fuels = [0, 0, vehicle.mass_properties.max_fuel, vehicle.mass_properties.max_fuel]
+    fuels = [0, vehicle.mass_properties.max_takeoff - (vehicle.mass_properties.operating_empty + vehicle.mass_properties.max_payload), vehicle.mass_properties.max_fuel, vehicle.mass_properties.max_fuel]
+    payloads = [vehicle.mass_properties.max_payload, vehicle.mass_properties.max_payload, vehicle.mass_properties.max_takeoff - (vehicle.mass_properties.operating_empty + fuels[2]), 0]
+
+    reserves = np.zeros_like(fuels)
+    reserves[0] = ICAOreserve(Aircraft, vehicle.mass_properties.max_payload, 1E-5)
+    reserves[1] = ICAOreserve(Aircraft, payloads[1], fuels[1])
+    reserves[2] = ICAOreserve(Aircraft, payloads[2], fuels[2])
+    reserves[3] = ICAOreserve(Aircraft, payloads[3], fuels[3])
         
-    payloads[2] = vehicle.mass_properties.max_takeoff - (vehicle.mass_properties.operating_empty + fuels[2])
-    fuels[1] = vehicle.mass_properties.max_takeoff - (vehicle.mass_properties.operating_empty + payloads[1])
 
     for k in range(len(payloads)):
         payload = payloads[k]
@@ -160,17 +232,11 @@ if False:
             payloads[k] = 0
 
     ranges = np.zeros_like(payloads)
-    reserves = np.zeros_like(payloads)
-
-    reserves[0] = ICAOreserve(Aircraft, payloads[0], 1E-5)
 
     for j in range(1, len(payloads)):
         if fuels[j] == 0:
             ranges[j] = 0
-            reserves[j] = ICAOreserve(Aircraft, payloads[j], 0)
         else:
-            reserves[j] = ICAOreserve(Aircraft, payloads[j], fuels[j])
-
             results =  fixedFuelMission(Aircraft = Aircraft,
                                         fuel = fuels[j],
                                         fuelReserve = reserves[j],
@@ -230,28 +296,463 @@ if False:
 
     plt.show()
 
+## H320 custom weight buildup diagram
+if False:
+    fig, ax = plt.subplots(1, 1, dpi=ddpi)
+
+    H2_A320_stockL = dv.Derivative(A320, "H2_MZFW+0_lrg")
+
+    tankL = dv.Tank(usableLH2=7400.0,
+                        ventPressure=1.5,
+                        aspectRatio=6.0,
+                        ullageFraction=0.05,
+                        endGeometry="2:1elliptical",
+                        fidelity="AutoInsulation",
+                        etaGrav=0.60,
+                        mdot_boiloff=0.03611,
+                        t_wall=0.005,
+                        show=False)
+        
+    H2_A320_stockL.ConvertToLH2(tankStyle="DorsalOnly",
+                                dorsalTank=tankL, dorsalxsecNum=10, dorsalxStart=3.0,
+                                Sfront=2.5, Dfront=0.15, Saft=3.5, Daft=0.35)
+
+    Aircraft = H2_A320_stockL
+    vehicle = Aircraft.suaveVehicle
+
+    fuels = [0, vehicle.mass_properties.max_fuel, vehicle.mass_properties.max_fuel]
+    
+    reserves = np.zeros_like(fuels)
+    reserves[0] = ICAOreserve(Aircraft,vehicle.mass_properties.max_payload, 1E-5)
+    reserves[1] = ICAOreserve(Aircraft,vehicle.mass_properties.max_zero_fuel-vehicle.mass_properties.max_fuel-vehicle.mass_properties.operating_empty, vehicle.mass_properties.max_fuel)
+    reserves[2] = ICAOreserve(Aircraft, 0, vehicle.mass_properties.max_fuel)
+
+    payloads = [vehicle.mass_properties.max_payload-reserves[0], vehicle.mass_properties.max_zero_fuel-vehicle.mass_properties.max_fuel-vehicle.mass_properties.operating_empty, 0]
+        
+    for k in range(len(payloads)):
+        payload = payloads[k]
+        if payload < 0:
+            print(f"Invalid payload {payload/1000:.2f} tonnes, setting to zero.")
+            payloads[k] = 0
+
+    ranges = np.zeros_like(payloads)
+
+
+    for j in range(1, len(payloads)):
+        if fuels[j] == 0:
+            ranges[j] = 0
+        else:
+            results =  fixedFuelMission(Aircraft = Aircraft,
+                                        fuel = fuels[j],
+                                        fuelReserve = reserves[j],
+                                        payload = payloads[j],
+                                        climbType = "AircraftDefined",
+                                        cruiseAlt = 10667 * Units.m)
+
+            ranges[j] = results.segments[-1].conditions.frames.inertial.aircraft_range[-1,0]
+    
+    alphaFill = 0.6
+    fsize = fsizefull
+
+    missionFuels = np.subtract(fuels, reserves)
+    for i in range(len(missionFuels)):
+        if missionFuels[i] < 0:
+            missionFuels[i] = 0
+
+    OEW = (Aircraft.suaveVehicle.mass_properties.operating_empty/1000)
+    
+    ax.fill_between((0, np.max(ranges)/1000), (0, 0), (OEW, OEW), color="green", alpha=alphaFill)
+    ax.plot((0, np.max(ranges)/1000), (OEW, OEW), color="green")
+    ax.text(np.max(ranges)/2000, OEW/2, "Operating Empty Weight", verticalalignment="center", horizontalalignment="center", fontsize = fsize)
+
+    ax.plot(np.divide(ranges, 1000), np.add(np.divide(payloads,1000), OEW), color="blue")
+    ax.fill_between(np.divide(ranges, 1000), (OEW, OEW, OEW), np.add(np.divide(payloads,1000), OEW), color="blue", alpha=alphaFill)
+    ax.text(0.4*np.max(ranges)/1000, OEW + 0.35*np.max(payloads)/1000, "Payload", verticalalignment="center", horizontalalignment="center", fontsize = fsize)
+
+    ax.plot(np.divide(ranges, 1000), np.add(np.divide(reserves,1000), np.add(OEW, np.divide(payloads,1000))), color="yellow")
+    ax.fill_between(np.divide(ranges, 1000), np.add(np.divide(payloads,1000), OEW), np.add(np.divide(reserves,1000), np.add(OEW, np.divide(payloads,1000))), color="yellow", alpha=alphaFill)
+    ax.text(0.5*np.max(ranges)/1000, (OEW + np.max(payloads)/1000 + np.max(reserves)/2000)*0.948, "ICAO Fuel Reserve", verticalalignment="center", horizontalalignment="center", fontsize = fsize/2, rotation = -4.5 )
+
+    ax.plot(np.divide(ranges, 1000), np.add(np.divide(missionFuels, 1000), np.add(np.divide(reserves,1000), np.add(OEW, np.divide(payloads,1000)))), color="red")
+    ax.fill_between(np.divide(ranges, 1000), np.add(np.add(np.divide(payloads,1000), OEW), np.divide(reserves, 1000)), np.add(np.divide(missionFuels, 1000), np.add(np.divide(reserves,1000), np.add(OEW, np.divide(payloads,1000)))), color="red", alpha=alphaFill)
+    ax.text(0.80*np.max(ranges)/1000, OEW + 0.8*np.max(payloads)/1000 + 0.1*np.max(missionFuels)/1000 - np.max(reserves)/1000, "Mission Fuel", verticalalignment="center", horizontalalignment="center", fontsize = fsize)
+
+    ax.axhline(Aircraft.suaveVehicle.mass_properties.max_takeoff/1000, linestyle="dashed", color="black")
+    ax.text(0.05*np.max(ranges)/1000, 1.005*Aircraft.suaveVehicle.mass_properties.max_takeoff/1000, "Max takeoff = max zero fuel", fontsize = fsize/2, verticalalignment="bottom", horizontalalignment="left")
+    #ax.axhline(Aircraft.suaveVehicle.mass_properties.max_zero_fuel/1000, linestyle="dashed", color="black")
+    #ax.text(0.98*np.max(ranges)/1000, Aircraft.suaveVehicle.mass_properties.max_zero_fuel/1000, "Max zero fuel", fontsize = fsize/2, verticalalignment="bottom", horizontalalignment="right")
+
+    # Add the design point
+    ax.scatter(np.divide(ranges[0:2], 1000), np.add(OEW, np.divide(payloads[0:2], 1000)), s=50, marker="o", color="black", edgecolors="white", linewidth=2, zorder=100)
+    ax.annotate("A", (ranges[0]/1000 + ranges[-1]*0.01/1000, OEW+0.8*payloads[0]/1000),zorder=200)
+    ax.annotate("B", (ranges[1]/1000 - ranges[-1]*0.01/1000, OEW+0.4*payloads[1]/1000),zorder=200)
+
+    #ax.plot(np.divide(ranges, 1000), np.divide(payloads, 1000), color="black", label="Payload")
+    #ax.plot(np.divide(ranges, 1000), np.divide(fuels, 1000), color="red", label="Fuel")
+    #ax.plot(np.divide(ranges, 1000), np.)
+
+    ax.set_xlim(0, np.max(ranges)/1000)
+    ax.set_ylim(0)
+    ax.set_xlabel("Range, km")
+    ax.set_ylabel("Mass, tonnes")
+    #ax.set_title(f"Payload-range diagram for {Aircraft.dispName}")
+    #ax.legend()
+    ax.grid()
+
+    plt.show()
+
+## Fly custom tank sizes at max range
+if False:
+    fname = "contTankSize_50.pickle"
+    generateNew = False
+
+    if generateNew:
+        constPayload = 180*84 # kg
+
+        maxFuelMass = 7400
+        deltaMZFW = 11300 # kg, uprating from A320
+        etaGravMax = 0.60
+        tankNum = 50
+
+        maxLength = 17 # m
+        lengthLimit = 17.2 # m
+        designTankDia = 3.2 # m
+        diatol = 1E-3
+
+        maxAspect = maxLength/designTankDia
+        minAspect = 0.6
+
+        aspectRatios = np.linspace(maxAspect, minAspect, tankNum)
+        fuelMasses = np.zeros_like(aspectRatios)
+        Aircrafts = []
+
+        # Check if we want to save
+        answer = input(f"Pickle data (will overwrite any existing {fname}): Y or N? ")
+        if answer == "Y" or answer == "y":
+            saveFlag = True
+        elif answer == "N" or answer == "n": 
+            saveFlag = False
+        else: tqdm.tqdm.write("Please enter Y or N.")
+
+        i = 0
+        for aspectRatio in aspectRatios:
+            if i == 0:
+                etaGrav = etaGravMax
+                fuelMass = maxFuelMass
+            else:
+                cylLH2frac = (fuelMass - endUsableLH2)/fuelMass # Note we are assuming same effective LH2 density
+                endsLH2frac = 1 - cylLH2frac
+
+                etaGrav = 1/(1 + (1/cylEtaGrav - 1)*cylLH2frac + (1/endsEtaGrav - 1)*endsLH2frac)
+            
+            # Converge the tank geometry
+            tankDia = 0
+
+            while tankDia/designTankDia < (1-diatol) or tankDia/designTankDia > (1+diatol):
+                tank = dv.Tank(usableLH2=fuelMass,
+                                ventPressure=1.5,
+                                aspectRatio=aspectRatio,
+                                ullageFraction=0.05,
+                                endGeometry="2:1elliptical",
+                                fidelity="AutoInsulation",
+                                etaGrav=etaGrav,
+                                mdot_boiloff=0.03611,
+                                t_wall=0.005,
+                                show=False,
+                                verbose=False)
+                
+                tankDia = tank.Do
+                if i != 0:
+                    fuelMass *= designTankDia/tankDia
+                else:
+                    aspectRatio /= designTankDia/tankDia
+
+            if tank.Lo > lengthLimit:
+                    raise ValueError(f"Tank length {tank.Lo:.1f} m exceeds maximum {maxLength:.1f} m")
+
+            if i == 0:
+                aspectRatios[0] = tank.aspectRatio
+
+                maxCapacity = tank.tankCapacity
+
+                endUsableLH2 = (2*tank.k_end*(tank.Di/1)**3/tank.tankCapacity)*tank.usableLH2
+                endStruct = tank.Aends*tank.m_struct/tank.Awet # Same wall thickness assumed
+                endsEtaGrav = endUsableLH2/(endUsableLH2+endStruct)
+
+                cylUsableLH2 = tank.usableLH2 - endUsableLH2
+                cylStruct = tank.m_struct - endStruct
+                cylEtaGrav = cylUsableLH2/(cylUsableLH2+cylStruct)
+
+            fuelMasses[i] = tank.usableLH2
+                
+            i += 1
+            tqdm.tqdm.write(f"Tank for {fuelMass:.1f} kg, {tank.Do:.2f} m x {tank.Lo:.2f} m, gravimetric efficiency {tank.etaGrav:.3f}")
+
+            deriv = dv.Derivative(A320, f"H2_{tank.usableLH2:.0f}kg")
+            deriv.ConvertToLH2(tankStyle="DorsalOnly",
+                               dorsalTank=tank, dorsalxsecNum=10, dorsalxStart=3.0,
+                               Sfront=2.5, Dfront=0.15, Saft=3.5, Daft=0.35)
+                
+            deriv.suaveVehicle.mass_properties.max_zero_fuel += deltaMZFW
+            deriv.suaveVehicle.mass_properties.max_takeoff += deltaMZFW
+            deriv.suaveVehicle.mass_properties.max_payload = deriv.suaveVehicle.mass_properties.max_zero_fuel - deriv.suaveVehicle.mass_properties.operating_empty
+
+            maxReserve = np.max((ICAOreserve(deriv, deriv.suaveVehicle.mass_properties.max_payload, 1E-5),
+                                ICAOreserve(deriv, 0, deriv.suaveVehicle.mass_properties.max_fuel),
+                                ICAOreserve(deriv, deriv.suaveVehicle.mass_properties.max_payload-deriv.suaveVehicle.mass_properties.max_fuel, deriv.suaveVehicle.mass_properties.max_fuel)))
+            if maxReserve > deriv.suaveVehicle.mass_properties.max_fuel:
+                raise ValueError(f"For aspect ratio {aspectRatio}, maximum reserve {maxReserve:.1f} kg exceeds fuel {deriv.suaveVehicle.mass_properties.max_fuel:.1f} kg")
+
+            Aircrafts.append(deepcopy(deriv))
+
+        constPayloadRanges = []
+        constPayloadFEPRs = []
+
+        maxPayloadRanges = []
+        maxPayloadFEPRs = []
+
+        for Aircraft in Aircrafts:
+            # Const payload run
+            fuel = Aircraft.suaveVehicle.mass_properties.max_fuel
+            payload = constPayload
+            reserves = ICAOreserve(Aircraft, payload, fuel)
+
+            results = fixedFuelMission(Aircraft=Aircraft,
+                                    payload=payload,
+                                    fuel=fuel,
+                                    fuelReserve=reserves,
+                                    climbType="AircraftDefined",
+                                    cruiseAlt=10667 * Units.m)
+            
+            flightRange = results.segments[-1].conditions.frames.inertial.aircraft_range[-1,0]
+            energy = (fuel-reserves) * Aircraft.suaveVehicle.networks.turbofan.combustor.fuel_data.specific_energy
+            FEPR = energy/(flightRange*payload)
+            constPayloadRanges.append(flightRange)
+            constPayloadFEPRs.append(FEPR)
+            print(f"Const payload: Range {flightRange/1000:.1f} km with fuel {Aircraft.suaveVehicle.mass_properties.max_fuel:.1f} kg, FEPR {FEPR:.2f} J/kgm")
+
+            # Max payload, tanks full run
+            fuel = Aircraft.suaveVehicle.mass_properties.max_fuel
+            payload = Aircraft.suaveVehicle.mass_properties.max_payload - fuel
+            reserves = ICAOreserve(Aircraft, payload, fuel)
+
+            results = fixedFuelMission(Aircraft=Aircraft,
+                                payload=payload,
+                                fuel=fuel,
+                                fuelReserve=reserves,
+                                climbType="AircraftDefined",
+                                cruiseAlt=10667 * Units.m)
+
+            flightRange = results.segments[-1].conditions.frames.inertial.aircraft_range[-1,0]
+            energy = (fuel-reserves) * Aircraft.suaveVehicle.networks.turbofan.combustor.fuel_data.specific_energy
+            FEPR = energy/(flightRange*payload)
+            maxPayloadRanges.append(flightRange)
+            maxPayloadFEPRs.append(FEPR)
+            print(f"Max payload: Range {flightRange/1000:.1f} km with fuel {Aircraft.suaveVehicle.mass_properties.max_fuel:.1f} kg, FEPR {FEPR:.2f} J/kgm")
+
+        if saveFlag:
+            data = {"constPayload": constPayload,
+                    "constPayloadRanges": constPayloadRanges,
+                    "constPayloadFEPRs": constPayloadFEPRs,
+                    "maxPayloadRanges": maxPayloadRanges,
+                    "maxPayloadFEPRs": maxPayloadFEPRs}
+
+            with open(fname, "wb") as f:
+                pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
+
+    with open(fname, "rb") as f:
+        data = pickle.load(f)
+    
+    constPayload = data["constPayload"]
+    constPayloadRanges = data["constPayloadRanges"]
+    constPayloadFEPRs = data["constPayloadFEPRs"]
+    maxPayloadRanges = data["maxPayloadRanges"]
+    maxPayloadFEPRs = data["maxPayloadFEPRs"]
+
+    fig, ax = plt.subplots(1, 1, dpi=ddpi)
+
+    ax.plot(np.divide(constPayloadRanges, 1000), constPayloadFEPRs, label=f"Full pax payload ({constPayload/1000:.1f} T)")
+    ax.plot(np.divide(maxPayloadRanges, 1000), maxPayloadFEPRs, label=f"Max (variable) payload")
+
+    ax.set_xlabel("Range, km")
+    ax.set_ylabel("FEPR, J/kgm")
+    ax.set_xlim(0)
+    ax.set_ylim(ax.get_ylim()[0], 12.9)
+    ax.grid()
+    ax.legend()
+
+    # Compute the FEPR integral
+    FEPRinterp = scipy.interpolate.interp1d(constPayloadRanges, constPayloadFEPRs, kind="linear")
+    def minFEPR(flightRange):
+        return FEPRinterp(flightRange)
+    
+    freqRA, minFlightRangeRA, maxFlightRangeRA = densityDist("ryanair")
+    minFlightRangeRA *= 1000
+    maxFlightRangeRA *= 1000
+    integralRangesRA = np.linspace(minFlightRangeRA, maxFlightRangeRA, 1000)
+
+    freqEJ, minFlightRangeEJ, maxFlightRangeEJ = densityDist("easyjet")
+    minFlightRangeEJ *= 1000
+    maxFlightRangeEJ *= 1000
+    integralRangesEJ = np.linspace(minFlightRangeEJ, maxFlightRangeEJ, 1000)
+
+    minFlightRangeU = 150E3
+    maxFlightRangeU = 4300E3
+    freqU = densityDist("uniform", smin=minFlightRangeU/1000, smax=maxFlightRangeU/1000)
+    integralRangesU = np.linspace(minFlightRangeU, maxFlightRangeU, 1000)
+
+    energyAvgU = np.trapz([minFEPR(s)*s*constPayload*freqU for s in integralRangesU], integralRangesU)/1000
+    energyAvgRA = np.trapz([minFEPR(s)*s*constPayload*freqRA(s/1000) for s in integralRangesRA], integralRangesRA)/1000
+    energyAvgEJ = np.trapz([minFEPR(s)*s*constPayload*freqEJ(s/1000) for s in integralRangesEJ], integralRangesEJ)/1000
+    print(f"Uniform flight distribution gives {energyAvgU/1E9:.3f} GJ/flight across the fleet.")
+    print(f"Ryanair flight distribution gives {energyAvgRA/1E9:.3f} GJ/flight across the fleet.")
+    print(f"Easyjet flight distribution gives {energyAvgEJ/1E9:.3f} GJ/flight across the fleet.")
+
+    plt.show()
+
+## Ntank optimiser using existing data
+if False:
+    Ntank = 15
+    
+    # Load the FEPR interpolators
+    interpolators = []
+    maxRanges = []
+    fnames = ["multiLH2_2tank_Uopt8.pickle", "multiLH2_2tank_Uopt14.pickle", "multiLH2_2tank_Uopt6.pickle", "multiLH2_2tank_Uopt11.pickle", "multiLH2_2tank.pickle", "multiLH2_2tank_Uopt12.pickle", "multiLH2_2tank_Uopt9.pickle", "multiLH2_2tank_Uopt10.pickle", "multiLH2_2tank_Uopt3.pickle", "multiLH2_2tank_Uopt2.pickle", "multiLH2_2tank_Uopt4.pickle", "multiLH2_2tank_Uopt5.pickle", "multiLH2_2tank_Uopt13.pickle", "multiLH2_2tank_Uopt1.pickle", "multiLH2_2tank_Uopt7.pickle", "multiLH2_1tank.pickle"]
+    capacities = [1100, 1500, 1800, 2500, 3000, 3300, 3600, 3800, 4000, 4500, 5200, 5500, 5900, 6000, 7000, 7400] # Must be ascending order
+    indices = range(len(capacities)-1)
+
+    for i in range(len(fnames)):
+        fname = fnames[i]
+        # Load a data file
+        with open(fname, "rb") as f:
+            data = pickle.load(f)
+
+        # Unpack
+        aircraftDatas = data["aircraftDatas"]
+        fuelMasses = data["fuelMasses"]
+        constPayload = data["constPayload"]
+        constPayloadRangesFuels = data["constPayloadRangesFuels"]
+        maxRangesConstPayload = data["maxRangesConstPayload"]
+
+        if fuelMasses[0] != capacities[i]:
+            raise ValueError("Fuel mass mismatch: Expect {capacities[i]:.1f} kg, got {fuelMasses[0]:.1f} kg.")
+
+        maxRanges.append(maxRangesConstPayload[0])
+
+        ranges = constPayloadRangesFuels[0,:,0]
+        fuels = np.ravel(constPayloadRangesFuels[0,:,1])
+        FEPRs = np.divide(np.multiply(fuels, aircraftDatas[0]["fuelLCV"]), np.multiply(ranges, constPayload))#
+
+        FEPRinterpolator = scipy.interpolate.interp1d(ranges, FEPRs, kind="linear")
+        interpolators.append(FEPRinterpolator)
+
+
+    # Create all combination pairs
+    combinations = list(itertools.combinations(indices, Ntank-1))
+    print(f"\nChoosing {Ntank-1} intermediate tanks from {len(indices)} capacities: {len(combinations)} combinations")
+
+    minEnergy = np.inf
+
+    pbar1 = tqdm.tqdm(total=len(combinations), position=1, desc=f"Tank combinations", ncols=80)
+
+    for i in range(len(combinations)):
+        comb = list(combinations[i])
+        comb.append(len(capacities)-1) # Include the biggest tank
+        combSort = np.sort(comb) # Ascending order of indices
+
+        FEPRinterpolators = []
+        maxRangesCur = []
+        capsCur = []
+
+        for index in combSort:
+            FEPRinterpolators.append(interpolators[index])
+            maxRangesCur.append(maxRanges[index])
+            capsCur.append(capacities[index])
+
+        def minFEPR(flightRange):
+            # Find which tank size we need
+            for j in range(Ntank):
+                if maxRangesCur[j] > flightRange:
+                    break
+            
+            interpolator = FEPRinterpolators[j]
+            
+            return interpolator(flightRange)
+    
+        chosenDist = "uniform"
+
+        if chosenDist == "Ryanair":
+            freqRA, minFlightRangeRA, maxFlightRangeRA = densityDist("ryanair")
+            minFlightRangeRA *= 1000
+            maxFlightRangeRA *= 1000
+            integralRangesRA = np.linspace(minFlightRangeRA, maxFlightRangeRA, 1000)
+
+            energyAvg = np.trapz([minFEPR(s)*s*constPayload*freqRA(s/1000) for s in integralRangesRA], integralRangesRA)/1000
+
+        elif chosenDist == "easyJet":
+            freqEJ, minFlightRangeEJ, maxFlightRangeEJ = densityDist("easyjet")
+            minFlightRangeEJ *= 1000
+            maxFlightRangeEJ *= 1000
+            integralRangesEJ = np.linspace(minFlightRangeEJ, maxFlightRangeEJ, 1000)
+
+            energyAvg = np.trapz([minFEPR(s)*s*constPayload*freqEJ(s/1000) for s in integralRangesEJ], integralRangesEJ)/1000
+
+        elif chosenDist == "uniform":
+            minFlightRangeU = 150E3
+            maxFlightRangeU = 4300E3
+            freqU = densityDist("uniform", smin=minFlightRangeU/1000, smax=maxFlightRangeU/1000)
+            integralRangesU = np.linspace(minFlightRangeU, maxFlightRangeU, 1000)
+
+            energyAvg = np.trapz([minFEPR(s)*s*constPayload*freqU for s in integralRangesU], integralRangesU)/1000
+        
+        #print(f"{chosenDist} flight distribution gives fleet energy {energyAvg/1E9:.3f} GJ/flight with capacities {capsCur}.")
+        if energyAvg < minEnergy:
+            minEnergy = energyAvg
+            bestCapacities = capsCur
+
+        pbar1.update(1)
+
+    tqdm.tqdm.write(f"Minimum energy for {chosenDist} distribution was {minEnergy/1E9:.3f} GJ/flight with {bestCapacities}")
+
 ## H320 payload range and multi-tank sizing
-if True:
+if False:
     # to add:
     # constant payload line
     # FEPR across constant payload line and along max payload frontier
-    generateNew = True
-    fname = "multiLH2_10tanks.pickle"
+    generateNew = False
+    internalTanks = False
+    hybridInternal = False
+    baselineOverride = False # Set true when handling kerosene baseline
+    fname = "multiLH2_3tank.pickle"#multiLH2_2hybrid_O4.pickle"#"multiLH2_1tankI.pickle"
 
     if generateNew:
         constPayload = 180*84 # 180 passengers by 84 kg / passenger
         constPayloadPoints = 20 # Number of ranges at which to fly along const payload line, per aircraft
 
-        etaGravMax = 0.60 # for full size tank only
+        if internalTanks:
+            etaGravMax = 0.70 # for full size tank only
+        elif hybridInternal:
+            etaGravIntMax = 0.70
+            etaGravExtMax = 0.60
+        else:
+            etaGravMax = 0.60
+
         deltaMZFW = 11300 # A321 uprating from A320
 
-        fuelMasses = [7400, 6575, 5750, 4925, 4100, 3275, 2450, 1625, 800] # 7400/5000/3000 ?# kg, must be descending order (flipped later)
-        #fuelMasses = [2000, 1000]
+        #fuelMasses = [7400, 6575, 5750, 4925, 4100, 3275, 2450, 1625, 800] # 7400/5000/3000 ?# kg, must be descending order (flipped later)
+        fuelMasses = [5500, 7250] # For hybrid internal case, convention is is (internal capacity, internal + largest internal, internal + 2nd largest internal, ...)
         Aircrafts = []
         i = 0
 
         maxTankLength = 17 # metres
-        designTankDia = 3.2 # m
+        if internalTanks:
+            designTankDia = 3.96
+        elif hybridInternal:
+            intTankDia = 3.96
+            extTankDia = 2.2
+            designTankDia = intTankDia
+        else:
+            designTankDia = 3.2 # m
         
         AR = maxTankLength/designTankDia
         diaTol = 1E-3
@@ -264,84 +765,132 @@ if True:
             saveFlag = False
         else: tqdm.tqdm.write("Please enter Y or N.")
 
-        # Generate tanks and aircraft
-        for fuelMass in fuelMasses:
-            if i == 0:
-                etaGrav = etaGravMax
-            else:                
-                cylLH2frac = (fuelMass - endUsableLH2)/fuelMass # Note we are assuming same effective LH2 density
-                endsLH2frac = 1 - cylLH2frac
+        if not baselineOverride:
+            # Generate tanks and aircraft configurations
+            for fuelMass in fuelMasses:
+                if i == 0:
+                    if hybridInternal:
+                        etaGravMax = etaGravIntMax
+                    etaGrav = etaGravMax
+                else:                
+                    cylLH2frac = (fuelMass - endUsableLH2)/fuelMass # Note we are assuming same effective LH2 density
+                    endsLH2frac = 1 - cylLH2frac
 
-                etaGrav = 1/(1 + (1/cylEtaGrav - 1)*cylLH2frac + (1/endsEtaGrav - 1)*endsLH2frac)
+                    etaGrav = 1/(1 + (1/cylEtaGrav - 1)*cylLH2frac + (1/endsEtaGrav - 1)*endsLH2frac)
+
+                    if i == 1 and hybridInternal:
+                        etaGrav = etaGravExtMax # Override for this case as this is first external tank design
+                
+                deriv = dv.Derivative(A320, f"H2_{fuelMass}kg")
+                tankDia = 0
+
+                if hybridInternal:
+                    if i == 0:
+                        designTankDia = intTankDia
+                        etaGrav = etaGravIntMax
+                    else:
+                        designTankDia = extTankDia
+                        fuelMass -= fuelMasses[0]
+                        designTankDia = extTankDia
+
+                while tankDia/designTankDia < 1-diaTol or tankDia/designTankDia > 1+diaTol:
+                    tank = dv.Tank(usableLH2=fuelMass,
+                                    ventPressure=1.5,
+                                    aspectRatio=AR,
+                                    ullageFraction=0.05,
+                                    endGeometry="2:1elliptical",
+                                    fidelity="AutoInsulation",
+                                    etaGrav=etaGrav,
+                                    mdot_boiloff=0.03611,
+                                    t_wall=0.005,
+                                    show=False,
+                                    verbose=False)
+                    tankDia = tank.Do
+                    AR = tank.aspectRatio / (designTankDia/tankDia)
+
+                if tank.Lo > maxTankLength:
+                    raise ValueError(f"Tank length {tank.Lo:.1f} m exceeds maximum {maxTankLength:.1f} m")
+
+                if (i == 0 & hybridInternal == False) or (i == 1 & hybridInternal):
+                    maxCapacity = tank.tankCapacity
+
+                    endUsableLH2 = (2*tank.k_end*(tank.Di/1)**3/tank.tankCapacity)*tank.usableLH2
+                    endStruct = tank.Aends*tank.m_struct/tank.Awet # Same wall thickness assumed
+                    endsEtaGrav = endUsableLH2/(endUsableLH2+endStruct)
+
+                    cylUsableLH2 = tank.usableLH2 - endUsableLH2
+                    cylStruct = tank.m_struct - endStruct
+                    cylEtaGrav = cylUsableLH2/(cylUsableLH2+cylStruct)
+                
+                i += 1
+                tqdm.tqdm.write(f"Tank for {fuelMass:.1f} kg, {tank.Do:.2f} m x {tank.Lo:.2f} m, gravimetric efficiency {tank.etaGrav:.3f}")
+
+                if internalTanks:
+                    deriv.stretchFuselage(extraLength=tank.Lo, OEWincrease=0)
+                    deriv.ConvertToLH2(tankStyle="Internal", internalTank=tank)
+                elif hybridInternal:
+                    if i == 1:
+                        deriv.stretchFuselage(extraLength=tank.Lo, OEWincrease=0)
+                        deriv.ConvertToLH2(tankStyle="Internal", internalTank=tank)
+                        internalTank = tank
+                    else:
+                        deriv.stretchFuselage(extraLength=internalTank.Lo, OEWincrease=0)
+                        deriv.ConvertToLH2(tankStyle="Both", internalTank=internalTank, dorsalTank=tank, dorsalxsecNum=10, dorsalxStart=3.0,
+                                    Sfront=2.5, Dfront=0.15, Saft=3.5, Daft=0.35)
+                else:
+                    deriv.ConvertToLH2(tankStyle="DorsalOnly",
+                                    dorsalTank=tank, dorsalxsecNum=10, dorsalxStart=3.0,
+                                    Sfront=2.5, Dfront=0.15, Saft=3.5, Daft=0.35)
+                
+                deriv.suaveVehicle.mass_properties.max_zero_fuel += deltaMZFW
+                deriv.suaveVehicle.mass_properties.max_takeoff += deltaMZFW
+                deriv.suaveVehicle.mass_properties.max_payload = deriv.suaveVehicle.mass_properties.max_zero_fuel - deriv.suaveVehicle.mass_properties.operating_empty
+
+                Aircrafts.append(deepcopy(deriv))
             
-            deriv = dv.Derivative(A320, f"H2_{fuelMass}kg")
-            tankDia = 0
+            if hybridInternal: # Match convention of descending fuel mass order to this point
+                Aircrafts = np.roll(Aircrafts, -1)
+                fuelMasses = np.roll(fuelMasses, -1) 
 
-            while tankDia/designTankDia < 1-diaTol or tankDia/designTankDia > 1+diaTol:
-                tank = dv.Tank(usableLH2=fuelMass,
-                               ventPressure=1.5,
-                               aspectRatio=AR,
-                               ullageFraction=0.05,
-                               endGeometry="2:1elliptical",
-                               fidelity="AutoInsulation",
-                               etaGrav=etaGrav,
-                               mdot_boiloff=0.03611,
-                               t_wall=0.005,
-                               show=False,
-                               verbose=False)
-                tankDia = tank.Do
-                AR = tank.aspectRatio / (designTankDia/tankDia)
-
-            if tank.Lo > maxTankLength:
-                raise ValueError(f"Tank length {tank.Lo:.1f} m exceeds maximum {maxTankLength:.1f} m")
-
-            if i == 0:
-                maxCapacity = tank.tankCapacity
-
-                endUsableLH2 = (2*tank.k_end*(tank.Di/1)**3/tank.tankCapacity)*tank.usableLH2
-                endStruct = tank.Aends*tank.m_struct/tank.Awet # Same wall thickness assumed
-                endsEtaGrav = endUsableLH2/(endUsableLH2+endStruct)
-
-                cylUsableLH2 = tank.usableLH2 - endUsableLH2
-                cylStruct = tank.m_struct - endStruct
-                cylEtaGrav = cylUsableLH2/(cylUsableLH2+cylStruct)
-            
-            i += 1
-            tqdm.tqdm.write(f"Tank for {fuelMass:.1f} kg, {tank.Do:.2f} m x {tank.Lo:.2f} m, gravimetric efficiency {tank.etaGrav:.3f}")
-
-            deriv.ConvertToLH2(tankStyle="DorsalOnly",
-                               dorsalTank=tank, dorsalxsecNum=10, dorsalxStart=3.0,
-                               Sfront=2.5, Dfront=0.15, Saft=3.5, Daft=0.35)
-            
-            deriv.suaveVehicle.mass_properties.max_zero_fuel += deltaMZFW
-            deriv.suaveVehicle.mass_properties.max_takeoff += deltaMZFW
-            deriv.suaveVehicle.mass_properties.max_payload = deriv.suaveVehicle.mass_properties.max_zero_fuel - deriv.suaveVehicle.mass_properties.operating_empty
-
-            Aircrafts.append(deepcopy(deriv))
-
-        # Easier to work in ascending order generally
-        Aircrafts = np.flip(Aircrafts)
-        fuelMasses = np.flip(fuelMasses)
+            # Easier to work in ascending order generally
+            Aircrafts = np.flip(Aircrafts)
+            fuelMasses = np.flip(fuelMasses)
 
         pbar1 = tqdm.tqdm(total=len(Aircrafts), position=1, desc=f"Payload range", ncols=80)
 
         aircraftDatas = []
 
+        if baselineOverride:
+            Aircrafts = list([A320])
+            fuelMasses = list([Aircrafts[0].suaveVehicle.mass_properties.max_fuel])
+
         for Aircraft in Aircrafts:
             vehicle = Aircraft.suaveVehicle
 
-            # Setup payload range frontier masses based on MZFW = MTOW constraint
-            frontierFuels = [0, vehicle.mass_properties.max_fuel, vehicle.mass_properties.max_fuel]
+            if not baselineOverride:
+                # Setup payload range frontier masses based on MZFW = MTOW constraint
+                frontierFuels = [0, vehicle.mass_properties.max_fuel, vehicle.mass_properties.max_fuel]
 
-            frontierReserves = np.zeros_like(frontierFuels)
-            frontierReserves[0] = ICAOreserve(Aircraft, vehicle.mass_properties.max_payload, 1E-5)
-            frontierReserves[1] = ICAOreserve(Aircraft, vehicle.mass_properties.max_payload-vehicle.mass_properties.max_fuel, vehicle.mass_properties.max_fuel)
-            frontierReserves[2] = ICAOreserve(Aircraft, 0, vehicle.mass_properties.max_fuel)
+                frontierReserves = np.zeros_like(frontierFuels)
+                frontierReserves[0] = ICAOreserve(Aircraft, vehicle.mass_properties.max_payload, 1E-5)
+                frontierReserves[1] = ICAOreserve(Aircraft, vehicle.mass_properties.max_payload-vehicle.mass_properties.max_fuel, vehicle.mass_properties.max_fuel)
+                frontierReserves[2] = ICAOreserve(Aircraft, 0, vehicle.mass_properties.max_fuel)
 
-            frontierPayloads = np.zeros_like(frontierFuels)
-            frontierPayloads[0] = vehicle.mass_properties.max_payload - frontierFuels[0] - frontierReserves[0]
-            frontierPayloads[1] = vehicle.mass_properties.max_payload - frontierFuels[1] - frontierReserves[1]
-            frontierPayloads[2] = 0
+                frontierPayloads = np.zeros_like(frontierFuels)
+                frontierPayloads[0] = vehicle.mass_properties.max_payload - frontierFuels[0] - frontierReserves[0]
+                frontierPayloads[1] = vehicle.mass_properties.max_payload - frontierFuels[1] - frontierReserves[1]
+                frontierPayloads[2] = 0
+            else:
+                frontierFuels = [0, vehicle.mass_properties.max_takeoff - (vehicle.mass_properties.operating_empty + vehicle.mass_properties.max_payload), vehicle.mass_properties.max_fuel, vehicle.mass_properties.max_fuel]
+                frontierPayloads = [vehicle.mass_properties.max_payload, vehicle.mass_properties.max_payload, vehicle.mass_properties.max_takeoff - (vehicle.mass_properties.operating_empty + vehicle.mass_properties.max_fuel), 0]
+
+                frontierReserves = np.zeros_like(frontierFuels)
+                frontierReserves[0] = ICAOreserve(Aircraft, frontierPayloads[0], 1E-5)
+                frontierReserves[1] = ICAOreserve(Aircraft, frontierPayloads[1], frontierFuels[1])
+                frontierReserves[2] = ICAOreserve(Aircraft, frontierPayloads[2], frontierFuels[2])
+                frontierReserves[3] = ICAOreserve(Aircraft, frontierPayloads[3], frontierFuels[3])
+                    
+                frontierRanges = np.zeros_like(frontierFuels)
 
             frontierRanges = np.zeros_like(frontierFuels)
 
@@ -371,12 +920,22 @@ if True:
             pbar1.update(1)      
 
         def maxRange(payload, frontierRanges, frontierPayloads):
+            if baselineOverride:
+                indexOffset = 1
+            else:
+                indexOffset = 0
             if payload > frontierPayloads[0]:
                 raise ValueError(f"Payload {payload:.1f} kg exceeds max payload {frontierPayloads[0]:.1f} kg.")
-            elif payload >= frontierPayloads[1]:
-                return (frontierPayloads[0] - payload)/(frontierPayloads[0] - frontierPayloads[1])*frontierRanges[1]
+            elif payload >= frontierPayloads[1+indexOffset]:
+                if baselineOverride:
+                    rangeOffset = frontierRanges[1]
+                    multipler = 0.995
+                else:
+                    rangeOffset = 0
+                    mulitpler = 1
+                return multipler*(rangeOffset + (frontierRanges[1+indexOffset] - rangeOffset)*(frontierPayloads[0+indexOffset] - payload)/(frontierPayloads[0+indexOffset] - frontierPayloads[1+indexOffset]))
             elif payload >= 0:
-                return frontierRanges[1] + (frontierPayloads[1] - payload)/frontierPayloads[1]*(frontierRanges[2] - frontierRanges[1])
+                return frontierRanges[1+indexOffset] + (frontierPayloads[1+indexOffset] - payload)/(frontierPayloads[1+indexOffset])*(frontierRanges[2+indexOffset] - frontierRanges[1+indexOffset])
             else:
                 raise ValueError(f"Payload {payload:.1f} kg is not positive.")
 
@@ -451,12 +1010,16 @@ if True:
             frontierRanges[0] = intersectRange
             frontierPayloads[0] = intersectPayload
 
-        ax.plot(np.divide(frontierRanges, 1000), np.divide(frontierPayloads, 1000), color=colours[i], label=r"LH$_2$ capacity " + f"{fuelMasses[i]/1000:.1f} T")
+        if not baselineOverride:
+            ax.plot(np.divide(frontierRanges, 1000), np.divide(frontierPayloads, 1000), color=colours[i], label=r"LH$_2$ capacity " + f"{fuelMasses[i]/1000:.1f} T")
+        else:
+            ax.plot(np.divide(frontierRanges, 1000), np.divide(frontierPayloads, 1000), color="grey", label=r"Kerosene baseline" + f"{fuelMasses[i]/1000:.1f} T")
         ax.plot()
         i += 1
 
     # Kerosene reference
-    ax.plot((0, 2860, 4650, 5370), (18.325, 18.325, 11.958, 0), color="grey", label="Kerosene")
+    if not baselineOverride:
+        ax.plot((0, 2860, 4650, 5370), (18.325, 18.325, 11.958, 0), color="grey", label="Kerosene")
 
     # Constant payload line
     ax.axhline(constPayload/1000, color="black", linestyle="dashed")
@@ -465,6 +1028,9 @@ if True:
     for i in range(len(fuelMasses)):
         ax.vlines(maxRangesConstPayload[i]/1000, 0, constPayload/1000, color=colours[i], linestyle="dotted")
         ax2.axvline(maxRangesConstPayload[i]/1000, color=colours[i], linestyle="dotted")
+        if False and i == 0:
+            ax.scatter(maxRangesConstPayload[i]/1000, constPayload/1000, marker="o", color=colours[i], zorder=100)
+            ax.text(1.04*maxRangesConstPayload[i]/1000, 0.85*constPayload/1000, "Tank switchover", zorder=200)
 
     FEPRinterpolators = []
     xsList = []
@@ -475,11 +1041,10 @@ if True:
         fuels = np.ravel(constPayloadRangesFuels[i,:,1])
         FEPRs = np.divide(np.multiply(fuels, aircraftDatas[0]["fuelLCV"]), np.multiply(ranges, constPayload))
 
-        FEPRinterpolator = scipy.interpolate.interp1d(ranges, FEPRs, kind="quadratic")
+        FEPRinterpolator = scipy.interpolate.interp1d(ranges, FEPRs, kind="linear")
         FEPRinterpolators.append(FEPRinterpolator)
         nx = 50
 
-        # for i > 0: want to plot two lines: dashed, up to maxRange(i-1)
         if i > 0:
             xs1 = np.linspace(ranges[0], maxRangesConstPayload[i-1], nx)
             xs2 = np.linspace(maxRangesConstPayload[i-1], ranges[-1], nx)
@@ -504,8 +1069,9 @@ if True:
             xfill = np.sort(np.concatenate([xsPrev, xs1]))
             yfill1 = np.interp(xfill, xsPrev, ysPrev)
             yfill2 = np.interp(xfill, xs1, ys1)
-            ax2.fill_between(np.divide(xfill,1000), yfill1, yfill2, where=yfill1 < yfill2, interpolate=True, color=colours[i-1], alpha=0.3, zorder=100)
-                    
+            ax2.fill_between(np.divide(xfill,1000), yfill1, yfill2, where=(yfill1 < yfill2) & (xfill>=maxRangesConstPayload[i-2]), hatch="///", interpolate=True, color=colours[i-1], alpha=0.3, zorder=100)
+            ax2.fill_between(np.divide(xfill,1000), yfill1, yfill2, where=(yfill1 < yfill2) & (xfill<=maxRangesConstPayload[i-2]), interpolate=True, color=colours[i-1], alpha=0.3, zorder=100)
+
             ax2.plot(np.divide(xs1, 1000), np.divide(ys1, 1), color=colours[i], alpha=1, linestyle="dashed")
             ax2.plot(np.divide(xs2, 1000), np.divide(ys2, 1), color="black", alpha=1)
 
@@ -517,7 +1083,8 @@ if True:
             ax2.plot(np.divide(xs, 1000), np.divide(ys, 1), color="black", alpha=1)
             ax2.set_ylim(np.min(ys)*0.98)
 
-    ax2.set_ylim(ax2.get_ylim()[0], ax2.get_ylim()[0]*1.20)
+    #ax2.set_ylim(ax2.get_ylim()[0], ax2.get_ylim()[0]*1.20)
+    ax2.set_ylim(10.3, 12.4)
     ax2.set_ylabel("FEPR, J/kgm")
     #ax2.set_ylabel(r"FEPR/FEPR$_{min}$")
     ax2.grid()
@@ -529,8 +1096,118 @@ if True:
     ax.legend()
 
     ax.grid()
+
+    # Compute the FEPR integrals
+    def minFEPR(flightRange):
+        # Find which tank size we need
+        for i in range(len(maxRangesConstPayload)):
+            if maxRangesConstPayload[i] > flightRange:
+                break
+        
+        interpolator = FEPRinterpolators[i]
+        
+        return interpolator(flightRange)
+    
+    if not baselineOverride:
+        freqRA, minFlightRangeRA, maxFlightRangeRA = densityDist("ryanair")
+        minFlightRangeRA *= 1000
+        maxFlightRangeRA *= 1000
+        integralRangesRA = np.linspace(minFlightRangeRA, maxFlightRangeRA, 1000)
+
+        freqEJ, minFlightRangeEJ, maxFlightRangeEJ = densityDist("easyjet")
+        minFlightRangeEJ *= 1000
+        maxFlightRangeEJ *= 1000
+        integralRangesEJ = np.linspace(minFlightRangeEJ, maxFlightRangeEJ, 1000)
+
+        minFlightRangeU = 150E3
+        maxFlightRangeU = 4300E3
+        freqU = densityDist("uniform", smin=minFlightRangeU/1000, smax=maxFlightRangeU/1000)
+        integralRangesU = np.linspace(minFlightRangeU, maxFlightRangeU, 1000)
+
+        energyAvgU = np.trapz([minFEPR(s)*s*constPayload*freqU for s in integralRangesU], integralRangesU)/1000
+        energyAvgRA = np.trapz([minFEPR(s)*s*constPayload*freqRA(s/1000) for s in integralRangesRA], integralRangesRA)/1000
+        energyAvgEJ = np.trapz([minFEPR(s)*s*constPayload*freqEJ(s/1000) for s in integralRangesEJ], integralRangesEJ)/1000
+        print(f"Uniform flight distribution gives {energyAvgU/1E9:.3f} GJ/flight across the fleet.")
+        print(f"Ryanair flight distribution gives {energyAvgRA/1E9:.3f} GJ/flight across the fleet.")
+        print(f"Easyjet flight distribution gives {energyAvgEJ/1E9:.3f} GJ/flight across the fleet.")
+
     plt.show()
 
+## Small tank capacity optimisation plot
+if False:
+    bigCap = 7400 # kg
+    smallCaps = (0, 540, 1100, 1500, 1800, 2500, 3000, 3300, 3600, 3800, 4000, 4500, 5200, 5500, 5900, 6000, 7000, bigCap) # kg
+
+    fig, ax = plt.subplots(1, 1, dpi=ddpi)
+    fig, ax2 = plt.subplots(1, 1, dpi=ddpi)
+
+    fsize = fsizefull
+    ax.axhline(1, color="black")
+    ax.text(0.94, 0.9995*1.0, "Fixed (single) capacity", fontsize = 0.6*fsize, verticalalignment="top", horizontalalignment="right")
+
+    for dist in ("ryanair", "easyjet", "uniform"): 
+        #dist = "uniform"   
+        if dist == "uniform":
+            bigEnergy = 377.205 # GJ/flight
+            contEnergy = 362.70 # Continuous tank sizing
+            smallEnergies = (bigEnergy, bigEnergy, 376.89, 376.40, 375.90, 374.35, 373.19, 372.54, 371.94, 371.57, 371.29, 370.65, 370.42, 370.54, 371.18, 371.38, 374.90, bigEnergy)
+            linecolour = colourUniform
+            linelabel = "Uniform"
+
+            Ntanks = (1, 2, 3, 4, 5, 10, 15)
+            NtankEnergies = (bigEnergy, 370.41, 367.90, 366.72, 366.05, 364.51, 364.23)
+
+        if dist == "ryanair":
+            bigEnergy = 243.81 # GJ/flight
+            contEnergy = 229.21
+            smallEnergies = (bigEnergy, bigEnergy, 243.72, 242.95, 241.83, 237.97, 235.47, 234.53, 234.26, 234.28, 234.42, 235.06, 236.47, 237.35, 238.62, 238.94, 242.35, bigEnergy)
+            linecolour = colourRyanair
+            linelabel = "Ryanair"
+
+            Ntanks = (1, 2, 3, 4, 5, 10, 15)
+            NtankEnergies = (bigEnergy, 234.26, 232.27, 231.29, 230.80, 230.05, 229.96)
+
+        if dist == "easyjet":
+            bigEnergy = 266.55 # GJ/flight
+            contEnergy = 252.24
+            smallEnergies = (bigEnergy, bigEnergy, 266.41, 265.46, 264.35, 261.33, 259.61, 259.00, 258.74, 258.69, 258.70, 258.81, 259.30, 259.94, 261.00, 261.28, 264.85, bigEnergy)
+            linecolour = colourEasyjet
+            linelabel = "easyJet"
+
+            Ntanks = (1, 2, 3, 4, 5, 10, 15)
+            NtankEnergies = (bigEnergy, 258.69, 255.88, 254.97, 254.36, 253.29, 253.13)
+
+        ax.plot(np.divide(smallCaps, bigCap), np.divide(smallEnergies, bigEnergy), label=linelabel, color=linecolour, zorder=100)
+        ax.scatter(smallCaps[np.argmin(smallEnergies)]/bigCap, np.min(smallEnergies)/bigEnergy, marker="o", color=linecolour, zorder=200)
+        ax.axhline(contEnergy/bigEnergy, color=linecolour, linestyle="dashed")
+        ax.text(0.98, contEnergy/bigEnergy, "Continuous capacity variation", fontsize = 0.6*fsize, verticalalignment="bottom", horizontalalignment="right")
+
+        fractionalBenefits = np.divide(np.subtract(bigEnergy, NtankEnergies), bigEnergy-contEnergy)
+
+        ax2.plot(Ntanks, fractionalBenefits, marker="o", color=linecolour, label=linelabel)
+        #ax2.axhline(contEnergy/bigEnergy, color=linecolour, linestyle="dashed")
+        #ax2.text(0.05*ax2.get_xlim()[1], contEnergy/bigEnergy, "Continuous capacity variation", fontsize = 0.6*fsize, verticalalignment="bottom", horizontalalignment="left")
+
+        if dist == "uniform":
+            break
+
+    ax.set_xlabel("Small tank capacity fraction (volume small tank / volume full size tank)")
+    ax.set_ylabel("Normalised fleet fuel burn")
+    ax.set_xlim((0, 1))
+    #ax.set_ylim(1.01)
+    ax.grid()
+    ax.legend()
+
+    ax2.axhline(1, color="black", linestyle="dashed")
+    ax2.text(0.08*ax2.get_xlim()[1], 0.985*1.0, "Continuous capacity variation", fontsize = 0.6*fsize, verticalalignment="top", horizontalalignment="left")
+    ax2.set_xlabel("Number of tank capacity options")
+    ax2.set_ylabel("Fraction of max energy saving achieved")
+    ax2.set_xlim(1)
+    ax2.set_ylim(0)
+    ax2.grid()
+    ax2.legend()
+
+    plt.show()
 
 ## H320 FEPR contours and payload range
 if False:

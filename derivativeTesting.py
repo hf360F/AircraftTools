@@ -12,23 +12,33 @@ import shapely
 from scipy import interpolate, optimize
 
 # Tank insulation test
-if False:
+if True:
     AR = 5.3
 
-    tank1 = dv.Tank(usableLH2=7600.0,
-                ventPressure=1.5,
-                aspectRatio=AR,
-                ullageFraction=0.05,
-                endGeometry="2:1elliptical",
-                fidelity="AutoInsulation",
-                etaGrav=0.55,
-                mdot_boiloff=0.30,
-                t_wall=0.005,
-                show=False)
-
-
+    tank1 = dv.Tank(usableLH2=7400.0,
+                    ventPressure=1.5,
+                    aspectRatio=AR,
+                    ullageFraction=0.05,
+                    endGeometry="2:1elliptical",
+                    fidelity="AutoInsulation",
+                    etaGrav=0.60,
+                    mdot_boiloff=0.03611, #0.30,
+                    t_wall=0.005,
+                    show=False)
+    
+    tank2 = dv.Tank(usableLH2=48950.0,
+                    ventPressure=1.5,
+                    aspectRatio=5.0,
+                    ullageFraction=0.05,
+                    endGeometry="2:1elliptical",
+                    fidelity="AutoInsulation",
+                    etaGrav=0.60,
+                    mdot_boiloff=0.03611*5, #0.30,
+                    t_wall=0.01,
+                    show=True)
+    
 # Tank stretch test
-if True:
+if False:
     A320 = base.Baseline("Airbus A320-200ceo")
 
     # A321 to A320 Length difference 6.9 m, max dia = 3.96 m
@@ -140,7 +150,7 @@ if False:
     print(Cd0s)
 
 # Test hydrogen EOS
-if False:
+if True:
     fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, dpi=200)
     fig.suptitle("Hydrogen saturation data (NIST)")
     fig.tight_layout()

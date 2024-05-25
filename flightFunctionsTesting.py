@@ -16,27 +16,27 @@ from copy import deepcopy
 
 A320 = base.Baseline("Airbus A320-200ceo")
 
-if False: # Define derivatives
+if True: # Define derivatives
     A321_deltaOEW = 6400-1600 # kg, difference from A320 (200 kg / row x 8 rows)
     A321_deltaMZFW = 11300 # kg, difference from A320
     A321_stretchLength = 6.9 # m, from A320
 
     # A320 dorsal tank derivative - max ferry range
     H2_A320_stockL = dv.Derivative(A320, "H2_MZFW+0_lrg")
-    tankL = dv.Tank(usableLH2=7600.0,
+    tankL = dv.Tank(usableLH2=7400.0,
                     ventPressure=1.5,
                     aspectRatio=6.0,
                     ullageFraction=0.05,
                     endGeometry="2:1elliptical",
-                    fidelity="Overall",
-                    etaGrav=0.55,
+                    fidelity="Overall", # REPLACE THIS WITH AUTOINSULATION
+                    etaGrav=0.60,
                     t_ins=0.15,
                     t_wall=0.005,
                     show=False)
     H2_A320_stockL.ConvertToLH2(tankStyle="DorsalOnly",
                         dorsalTank=tankL, dorsalxsecNum=10, dorsalxStart=3.0,
                         Sfront=2.5, Dfront=0.15, Saft=3.5, Daft=0.35)
-
+    """
     # Uprated MZFW to A321 value
     H2_A320_MZFWplusL = deepcopy(H2_A320_stockL)
     H2_A320_MZFWplusL.modName = "A321_MZFW_dors"
@@ -70,28 +70,31 @@ if False: # Define derivatives
     H2_A320_MZFWplusS.suaveVehicle.mass_properties.max_takeoff += A321_deltaMZFW
     #H2_A320_MZFWplusS.suaveVehicle.mass_properties.operating_empty += A321_deltaOEW 
     H2_A320_MZFWplusS.suaveVehicle.mass_properties.max_payload = H2_A320_MZFWplusS.suaveVehicle.mass_properties.max_zero_fuel - H2_A320_MZFWplusS.suaveVehicle.mass_properties.operating_empty
-
-
     """
-    # A320 with internal tank
-    internalTank = dv.Tank(usableLH2=3610,
+
+    # A320 with internal tank    
+    internalTank = dv.Tank(usableLH2=7000,
                             ventPressure=1.5,
-                            aspectRatio=1.83,
+                            aspectRatio=2.59,
                             ullageFraction=0.05,
                             endGeometry="2:1elliptical",
-                            fidelity="Overall",
-                            etaGrav=0.65,
-                            t_ins=0.15,
+                            fidelity="AutoInsulation",
+                            etaGrav=0.70,
+                            mdot_boiloff=0.03611,
                             t_wall=0.005,
                             show=False,
-                            verbose=True)
-    H2_A321_int = dv.Derivative(A320, "A321_int")
-    H2_A321_int.stretchFuselage(extraLength=6.9, OEWincrease=A321_deltaOEW) # A320 to A321
-    H2_A321_int.suaveVehicle.mass_properties.max_zero_fuel += A321_deltaMZFW
-    H2_A321_int.ConvertToLH2(tankStyle="Internal",
+                            verbose=False)
+
+    print(f"External diameter {internalTank.Do:.3f} m")
+    print(f"Stretch legnth {internalTank.Lo:.3f} m")
+
+    H2_A320_int = dv.Derivative(A320, "A320_int")
+    H2_A320_int.stretchFuselage(extraLength=internalTank.Lo, OEWincrease=0) # A320 to A321
+    H2_A320_int.suaveVehicle.mass_properties.max_zero_fuel += A321_deltaMZFW
+    H2_A320_int.ConvertToLH2(tankStyle="Internal",
                             internalTank=internalTank)
 
-
+    """
     totalLH2 = tankL.usableLH2
     dorsTank2 = dv.Tank(usableLH2 = tankL.usableLH2 - internalTank.usableLH2,
                         ventPressure=1.5,
@@ -105,7 +108,7 @@ if False: # Define derivatives
                         show=False,
                         verbose=True)
 
-    H2_A321_intdors = dv.Derivative(A320, "A321_int+dors")
+    H2_A321_intdors = dv.Derivative(A320, "A320_int+dors")
     H2_A321_intdors.stretchFuselage(extraLength=A321_stretchLength, OEWincrease=A321_deltaOEW) # Stretch to 321 size
     H2_A321_intdors.suaveVehicle.mass_properties.max_zero_fuel += A321_deltaMZFW
     H2_A321_intdors.ConvertToLH2(tankStyle="Both",
@@ -144,8 +147,8 @@ def plot_mission(results,line_style='bo-'):
     return
 
 # Drag polar and breakdown
-if True:
-    Aircrafts = list([A320])#, H2_A320_MZFWplusL)
+if False:
+    Aircrafts = list([A320, H2_A320_stockL])#, H2_A320_MZFWplusL)
     colours = ("red", "blue")
     i = 0
 
@@ -158,7 +161,7 @@ if True:
         targetMach = Aircraft.cruise_mach
         nearestMachIndex = np.argmin(np.abs(np.subtract(results["machs"], targetMach)))
 
-        targetCl = 0.45
+        targetCl = 0.53
         Cls = results["totalLift"][nearestMachIndex]
         nearestClIndex = np.argmin(np.abs(np.subtract(Cls, targetCl)))
 
@@ -215,7 +218,7 @@ if True:
         ax2.pie(dragBreakdown, labels=dragLabels, autopct=formatter1, startangle=angle, explode=explode)
         fig.suptitle(f"{Aircraft.dispName} drag breakdown\nM = {mach:.3f}, h = {results['altitude']:.0f} m, $C_L$ = {Cl:.3f}"\
                      r" ($\alpha$ = "+f"{180*alpha/np.pi:.2f}"+r"$^{\circ}$),"\
-                     f" $C_D$ = {np.sum(dragBreakdown):.3f}")
+                     f" $C_D$ = {np.sum(dragBreakdown):.4f}")
         """
         # Component breakdown for parasitic drag
         parasiticDragFull = results["parasiticDragFull"][nearestMachIndex][nearestClIndex]
@@ -283,7 +286,7 @@ if True:
 # Fixed range cruise flight; given payload, determine required fuel
 if True:
     results = fixedRangeMission(Aircraft = A320,
-                                range = 500 * Units.km,
+                                range = 2500 * Units.km,
                                 payload = 5000 * Units.kg,
                                 ICAOreserves = True,
                                 climbType = "AircraftDefined",
@@ -295,7 +298,7 @@ if True:
 # Produce payload range diagrams
 if False:
     ncols = 80
-    Aircrafts = (A320, H2_A320_MZFWplusS, H2_A320_MZFWplusL)
+    Aircrafts = (A320, H2_A320_int)
     colours = ("red", "lightblue", "navy")
     i = 0
 
@@ -325,10 +328,7 @@ if False:
             if fuels[j] == 0:
                 ranges[j] = 0
             else:
-                t_max = endurance(Aircraft, payload=payloads[j], fuel=fuels[j])
-
-                # Reserves for ICAO Annex 6 without a destination alternate aerodrome
-                fuelReserve = np.max((fuels[j]*5*60/t_max, 0.05*fuels[j])) + ((30+15)*60)*fuels[j]/t_max
+                fuelReserve = ICAOreserve(Aircraft, payload=payloads[j], fuel=fuels[j])
 
                 results =  fixedFuelMission(Aircraft = Aircraft,
                                             fuel = fuels[j],
@@ -350,7 +350,7 @@ if False:
     ax.set_ylim(0)
     ax.set_xlabel("Range, km")
     ax.set_ylabel("Payload, tonnes")
-    ax.legend(("A320ceo, kerosene", "A320 deriv. 7.6T LH2 tank", "A320 deriv. 4.0T LH2 tank"))
+    ax.legend()
     ax.grid()
 
     plt.show()
